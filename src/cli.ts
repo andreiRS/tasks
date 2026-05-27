@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { storeDir, ensureStore } from "./store.ts";
+
 const args = process.argv.slice(2);
 const [command, ...rest] = args;
 
@@ -8,6 +10,9 @@ if (command === "new") {
     process.stderr.write("tasks: INVALID_TITLE: title is required\n");
     process.exit(1);
   }
+
+  const dir = storeDir(process.cwd());
+  await ensureStore(dir);
 }
 
 process.exit(0);
