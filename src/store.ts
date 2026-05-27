@@ -471,6 +471,66 @@ export async function moveTask(dir: string, idOrUuid: string, targetColumn: stri
 }
 
 /**
+ * Remove a task from the store via `git rm` and commit atomically.
+ * - Unknown id/uuid: throws TasksError with code NOT_FOUND.
+ *
+ * Acquires flock. Honors dirty-tree guard.
+ */
+export async function removeTask(dir: string, idOrUuid: string): Promise<TaskData> {
+  return withLock(dir, async () => {
+    // Dirty-tree guard inside the lock (definitive check)
+    if (await isStoreDirty(dir)) {
+      throw new TasksError(
+        "STORE_DIRTY",
+        "store working tree is dirty; commit or discard pending changes before running mutating commands",
+        {}
+      );
+    }
+
+    // Find the task
+    const task = findTask(dir, idOrUuid);
+    if (!task) {
+      throw new TasksError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
+    }
+
+    // Determine the filename
+    const colDir = join(dir, task.column);
+    const files = readdirSync(colDir).filter((f) => f.endsWith(".md"));
+    const byShortId = /^\d+$/.test(idOrUuid);
+    const targetId = byShortId ? parseInt(idOrUuid, 10) : null;
+
+    let filename: string | null = null;
+    for (const f of files) {
+      const raw = readFileSync(join(colDir, f), "utf-8");
+      const parts = raw.split(/^---\s*$/m);
+      if (parts.length < 3) continue;
+      const fm = yamlParse(parts[1]) as Record<string, unknown>;
+      const matches = byShortId ? fm.id === targetId : fm.uuid === idOrUuid;
+      if (matches) {
+        filename = f;
+        break;
+      }
+    }
+
+    if (!filename) {
+      throw new TasksError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
+    }
+
+    const relPath = `${task.column}/${filename}`;
+
+    // git rm and commit
+    const rmExit = await git(["rm", relPath], dir);
+    if (rmExit !== 0) {
+      throw new TasksError("GIT_ERROR", `git rm failed`, {});
+    }
+
+    await git(["commit", "-m", `task: rm #${task.id} — ${task.title}`], dir);
+
+    return task;
+  });
+}
+
+/**
  * Find a task by short id (positive integer string) or UUID.
  * Walks all six column directories.
  * Returns TaskData (with normalized defaults) or null if not found.

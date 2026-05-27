@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
-import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, TasksError, COLUMNS } from "./store.ts";
+import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, TasksError, COLUMNS } from "./store.ts";
 import { renderTask, renderList, renderBoard } from "./render.ts";
 
 /**
@@ -366,6 +366,62 @@ if (command === "new") {
 
   try {
     await moveTask(dir, idOrUuid, targetColumn);
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        writePlainError(`${err.code}: ${err.message}`);
+      }
+      process.exit(1);
+    }
+    throw err;
+  }
+} else if (command === "rm") {
+  const jsonFlag = rest.includes("--json");
+  const idOrUuid = rest.find((a) => a !== "--json") ?? "";
+
+  if (!idOrUuid) {
+    const msg = "usage: tasks rm <id|uuid>";
+    if (jsonFlag) {
+      writeJsonError("MISSING_FIELD", msg, {});
+    } else {
+      writePlainError(`MISSING_FIELD: ${msg}`);
+    }
+    process.exit(1);
+  }
+
+  // Check flock availability
+  try {
+    findFlockOrFail();
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        process.stderr.write(`${err.message}\n`);
+      }
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  const dir = storeDir(process.cwd());
+  await ensureStore(dir);
+
+  // Early dirty-tree check (outside lock) for a fast, clear error message
+  if (await isStoreDirty(dir)) {
+    const msg = "store working tree is dirty; commit or discard pending changes before running mutating commands";
+    if (jsonFlag) {
+      writeJsonError("STORE_DIRTY", msg, {});
+    } else {
+      process.stderr.write(`tasks: STORE_DIRTY: ${msg}\n`);
+    }
+    process.exit(1);
+  }
+
+  try {
+    await removeTask(dir, idOrUuid);
   } catch (err) {
     if (err instanceof TasksError) {
       if (jsonFlag) {
