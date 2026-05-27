@@ -35,6 +35,44 @@ function validateTitle(title: string): string | null {
   return null;
 }
 
+/**
+ * Parse a duration string of the form `<N>d` (e.g. "7d", "30d", "0d").
+ * Returns the number of days as a non-negative integer, or null if the
+ * input does not match the expected format or is negative.
+ *
+ * Valid: "7d", "0d", "30d"
+ * Invalid: "abc", "-1d", "7", "7 d"
+ */
+function parseSinceDays(value: string): number | null {
+  const match = /^(\d+)d$/.exec(value);
+  if (!match) return null;
+  return parseInt(match[1], 10);
+}
+
+/**
+ * Apply the done-column cutoff filter to a task list.
+ *
+ * @param tasks     Full task array.
+ * @param allFlag   When true, skip all cutoff filtering.
+ * @param sinceDays Number of days; tasks in `done` whose `updated_at` is
+ *                  strictly older than `sinceDays` days ago are removed.
+ *                  Default is 7 days.
+ */
+function applyDoneCutoff(
+  tasks: import("./store.ts").TaskData[],
+  allFlag: boolean,
+  sinceDays: number
+): import("./store.ts").TaskData[] {
+  if (allFlag) return tasks;
+  const cutoffMs = sinceDays * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  return tasks.filter((t) => {
+    if (t.column !== "done") return true;
+    const updatedMs = new Date(t.updated_at).getTime();
+    return now - updatedMs <= cutoffMs;
+  });
+}
+
 const args = process.argv.slice(2);
 const [command, ...rest] = args;
 
@@ -146,6 +184,26 @@ if (command === "new") {
     return Boolean(process.stdout.isTTY);
   }
 
+  const allFlag = rest.includes("--all");
+
+  // Parse --since <duration> (e.g. --since 30d)
+  let sinceDays = 7; // default: 7-day cutoff
+  const sinceIdx = rest.indexOf("--since");
+  if (sinceIdx !== -1 && sinceIdx + 1 < rest.length) {
+    const sinceVal = rest[sinceIdx + 1];
+    const parsed = parseSinceDays(sinceVal);
+    if (parsed === null) {
+      const msg = `invalid --since value: ${sinceVal}. Expected format: <N>d (e.g. 7d, 30d)`;
+      if (jsonFlag) {
+        writeJsonError("INVALID_SINCE", msg, { value: sinceVal });
+      } else {
+        writePlainError(`INVALID_SINCE: ${msg}`);
+      }
+      process.exit(1);
+    }
+    sinceDays = parsed;
+  }
+
   // Collect all --column <value> arguments (repeatable, OR-combine).
   const columnFilters: string[] = [];
   for (let i = 0; i < rest.length; i++) {
@@ -183,6 +241,9 @@ if (command === "new") {
 
   let tasks = findAllTasks(dir);
 
+  // Apply done-column cutoff before any other filters.
+  tasks = applyDoneCutoff(tasks, allFlag, sinceDays);
+
   // Apply column filter when one or more --column flags were given.
   if (columnFilters.length > 0) {
     tasks = tasks.filter((t) => columnFilters.includes(t.column));
@@ -196,12 +257,31 @@ if (command === "new") {
 } else if (command === "board") {
   const jsonFlag = rest.includes("--json");
   const noColorFlag = rest.includes("--no-color");
+  const allFlag = rest.includes("--all");
 
   function shouldColor(): boolean {
     if (noColorFlag) return false;
     if (process.env.NO_COLOR !== undefined && process.env.NO_COLOR !== "") return false;
     if (process.env.FORCE_COLOR === "1") return true;
     return Boolean(process.stdout.isTTY);
+  }
+
+  // Parse --since <duration> (e.g. --since 30d)
+  let sinceDays = 7; // default: 7-day cutoff
+  const sinceIdx = rest.indexOf("--since");
+  if (sinceIdx !== -1 && sinceIdx + 1 < rest.length) {
+    const sinceVal = rest[sinceIdx + 1];
+    const parsed = parseSinceDays(sinceVal);
+    if (parsed === null) {
+      const msg = `invalid --since value: ${sinceVal}. Expected format: <N>d (e.g. 7d, 30d)`;
+      if (jsonFlag) {
+        writeJsonError("INVALID_SINCE", msg, { value: sinceVal });
+      } else {
+        writePlainError(`INVALID_SINCE: ${msg}`);
+      }
+      process.exit(1);
+    }
+    sinceDays = parsed;
   }
 
   // Read-only: do NOT auto-init. Return error if store does not exist.
@@ -217,7 +297,11 @@ if (command === "new") {
     process.exit(1);
   }
 
-  const tasks = findAllTasks(dir);
+  let tasks = findAllTasks(dir);
+
+  // Apply done-column cutoff.
+  tasks = applyDoneCutoff(tasks, allFlag, sinceDays);
+
   const grouped = groupTasksByColumn(tasks);
 
   if (jsonFlag) {
