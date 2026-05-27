@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
-import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, findFlockOrFail, TasksError } from "./store.ts";
+import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, findFlockOrFail, TasksError, COLUMNS } from "./store.ts";
 import { renderTask, renderList } from "./render.ts";
 
 /**
@@ -146,6 +146,28 @@ if (command === "new") {
     return Boolean(process.stdout.isTTY);
   }
 
+  // Collect all --column <value> arguments (repeatable, OR-combine).
+  const columnFilters: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "--column" && i + 1 < rest.length) {
+      columnFilters.push(rest[i + 1]);
+      i++; // skip value token
+    }
+  }
+
+  // Validate column names before touching the store.
+  for (const col of columnFilters) {
+    if (!COLUMNS.includes(col)) {
+      const msg = `unknown column: ${col}. Valid columns: ${COLUMNS.join(", ")}`;
+      if (jsonFlag) {
+        writeJsonError("UNKNOWN_COLUMN", msg, { column: col, valid: COLUMNS });
+      } else {
+        writePlainError(`UNKNOWN_COLUMN: ${msg}`);
+      }
+      process.exit(1);
+    }
+  }
+
   // Read-only: do NOT auto-init. Return error if store does not exist.
   const dir = resolveStoreDir(process.cwd());
 
@@ -159,7 +181,12 @@ if (command === "new") {
     process.exit(1);
   }
 
-  const tasks = findAllTasks(dir);
+  let tasks = findAllTasks(dir);
+
+  // Apply column filter when one or more --column flags were given.
+  if (columnFilters.length > 0) {
+    tasks = tasks.filter((t) => columnFilters.includes(t.column));
+  }
 
   if (jsonFlag) {
     process.stdout.write(JSON.stringify(tasks) + "\n");

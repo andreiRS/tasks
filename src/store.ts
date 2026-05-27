@@ -19,7 +19,7 @@ export class TasksError extends Error {
   }
 }
 
-const COLUMNS = ["backlog", "ready", "doing", "blocked", "review", "done"];
+export const COLUMNS = ["backlog", "ready", "doing", "blocked", "review", "done"];
 
 /**
  * Walk up from `startDir` to find the nearest `.git` directory.

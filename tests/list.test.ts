@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderList } from "../src/render.ts";
@@ -263,4 +263,148 @@ test("tasks list with FORCE_COLOR=1 emits ANSI escapes", async () => {
   ]);
   expect(exitCode).toBe(0);
   expect(stdout).toMatch(/\x1b\[/);
+});
+
+// ─── Helpers for --column filter tests ──────────────────────────────────────
+
+/**
+ * Manually plant a task file into a given column directory.
+ * Used to seed multi-column state without `tasks mv` (not yet implemented).
+ * We write a minimal YAML frontmatter directly to disk.
+ */
+function plantTask(storeDir: string, column: string, id: number, title: string): void {
+  const colDir = join(storeDir, column);
+  mkdirSync(colDir, { recursive: true });
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const filename = `${id}-${slug}.md`;
+  const now = "2026-05-27T10:00:00.000Z";
+  const uuid = `${"a".repeat(8)}-${id.toString().padStart(4, "0")}-4000-8000-${"b".repeat(12)}`;
+  const content = `---\nid: ${id}\nuuid: ${uuid}\ntitle: ${title}\ncreated_at: ${now}\nupdated_at: ${now}\n---\n`;
+  writeFileSync(join(colDir, filename), content, "utf-8");
+}
+
+/**
+ * Initialize a bare store (git init + column dirs + initial commit) without
+ * going through the CLI, so we can plant tasks before any `tasks new` call.
+ */
+async function initBareStore(storeDir: string): Promise<void> {
+  mkdirSync(storeDir, { recursive: true });
+  for (const col of ["backlog", "ready", "doing", "blocked", "review", "done"]) {
+    mkdirSync(join(storeDir, col), { recursive: true });
+  }
+  const spawn = (args: string[]) =>
+    Bun.spawn(args, { cwd: storeDir, stdout: "pipe", stderr: "pipe" }).exited;
+  await spawn(["git", "init"]);
+  writeFileSync(join(storeDir, ".gitignore"), ".tasks-lock\n", "utf-8");
+  await spawn(["git", "add", ".gitignore"]);
+  await spawn(["git", "commit", "-m", "init"]);
+  // Also write meta.yaml so `tasks new` doesn't break if used after
+  writeFileSync(join(storeDir, "meta.yaml"), "next_id: 1\n", "utf-8");
+  await spawn(["git", "add", "meta.yaml"]);
+  await spawn(["git", "commit", "-m", "meta"]);
+}
+
+/**
+ * Derive the store path from tasksHome + encoded cwd.
+ * Uses realpathSync to resolve macOS symlinks (/var -> /private/var) so the
+ * encoding matches what storeDir() computes inside the CLI process.
+ */
+function deriveStorePath(tasksHome: string, cwd: string): string {
+  const realCwd = realpathSync(cwd);
+  const encoded = realCwd.replace(/-/g, "--").replace(/\//g, "-");
+  return join(tasksHome, "projects", encoded);
+}
+
+// ─── CLI E2E: tasks list --column <known> ─────────────────────────────────────
+
+test("tasks list --column filters to only that column (--json)", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "backlog task one");
+  plantTask(storeDir, "backlog", 2, "backlog task two");
+  plantTask(storeDir, "doing", 3, "doing task one");
+  // Commit planted files so store is clean
+  const git = (args: string[]) =>
+    Bun.spawn(["git", ...args], { cwd: storeDir, stdout: "pipe", stderr: "pipe" }).exited;
+  await git(["add", "."]);
+  await git(["commit", "-m", "seed tasks"]);
+
+  const { exitCode, stdout } = await runTasks(["list", "--column", "backlog", "--json"]);
+  expect(exitCode).toBe(0);
+
+  const parsed = JSON.parse(stdout) as Array<Record<string, unknown>>;
+  expect(Array.isArray(parsed)).toBe(true);
+  expect(parsed).toHaveLength(2);
+  for (const t of parsed) {
+    expect(t.column).toBe("backlog");
+  }
+  const titles = parsed.map((t) => t.title);
+  expect(titles).toContain("backlog task one");
+  expect(titles).toContain("backlog task two");
+});
+
+test("tasks list --column filters to only that column (human output)", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "backlog task one");
+  plantTask(storeDir, "doing", 2, "doing task one");
+  const git = (args: string[]) =>
+    Bun.spawn(["git", ...args], { cwd: storeDir, stdout: "pipe", stderr: "pipe" }).exited;
+  await git(["add", "."]);
+  await git(["commit", "-m", "seed tasks"]);
+
+  const { exitCode, stdout } = await runTasks(["list", "--column", "doing"]);
+  expect(exitCode).toBe(0);
+
+  const lines = stdout.split("\n").filter((l) => l.length > 0);
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain("doing task one");
+  expect(lines[0]).not.toContain("backlog task one");
+});
+
+test("tasks list --column OR-combines multiple --column flags (--json)", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "backlog task");
+  plantTask(storeDir, "doing", 2, "doing task");
+  plantTask(storeDir, "done", 3, "done task");
+  const git = (args: string[]) =>
+    Bun.spawn(["git", ...args], { cwd: storeDir, stdout: "pipe", stderr: "pipe" }).exited;
+  await git(["add", "."]);
+  await git(["commit", "-m", "seed tasks"]);
+
+  const { exitCode, stdout } = await runTasks(["list", "--column", "backlog", "--column", "doing", "--json"]);
+  expect(exitCode).toBe(0);
+
+  const parsed = JSON.parse(stdout) as Array<Record<string, unknown>>;
+  expect(parsed).toHaveLength(2);
+  const cols = parsed.map((t) => t.column);
+  expect(cols).toContain("backlog");
+  expect(cols).toContain("doing");
+  expect(cols).not.toContain("done");
+});
+
+// ─── CLI E2E: tasks list --column <unknown> ───────────────────────────────────
+
+test("tasks list --column with unknown column exits non-zero and emits UNKNOWN_COLUMN (plain)", async () => {
+  // Need an initialized store for this test
+  await runTasks(["new", "init task"]);
+
+  const { exitCode, stderr } = await runTasks(["list", "--column", "nonexistent"]);
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("UNKNOWN_COLUMN");
+});
+
+test("tasks list --column with unknown column exits non-zero and emits UNKNOWN_COLUMN (--json)", async () => {
+  await runTasks(["new", "init task"]);
+
+  const { exitCode, stderr } = await runTasks(["list", "--column", "nonexistent", "--json"]);
+  expect(exitCode).not.toBe(0);
+
+  let parsed: Record<string, unknown>;
+  expect(() => { parsed = JSON.parse(stderr); }).not.toThrow();
+  parsed = JSON.parse(stderr) as Record<string, unknown>;
+
+  const error = parsed.error as Record<string, unknown>;
+  expect(error.code).toBe("UNKNOWN_COLUMN");
 });
