@@ -1,5 +1,20 @@
 #!/usr/bin/env bun
-import { storeDir, ensureStore, createTask } from "./store.ts";
+import { storeDir, ensureStore, createTask, resolveStoreDir, findTask } from "./store.ts";
+
+/**
+ * Write a JSON error envelope to stderr.
+ * Shape: { "error": { "code": string, "message": string, "details": object } }
+ */
+function writeJsonError(code: string, message: string, details: Record<string, unknown> = {}): void {
+  process.stderr.write(JSON.stringify({ error: { code, message, details } }) + "\n");
+}
+
+/**
+ * Write a plain-text error to stderr.
+ */
+function writePlainError(message: string): void {
+  process.stderr.write(`tasks: ${message}\n`);
+}
 
 /**
  * Validate a task title. Returns null on success, or an error message string.
@@ -33,6 +48,39 @@ if (command === "new") {
   await ensureStore(dir);
   const id = await createTask(dir, title);
   process.stdout.write(`task: new #${id} — ${title}\n`);
+} else if (command === "show") {
+  // Determine whether --json was passed and get the id/uuid argument
+  const jsonFlag = rest.includes("--json");
+  const idOrUuid = rest.find((a) => a !== "--json") ?? "";
+
+  if (!idOrUuid) {
+    if (jsonFlag) {
+      writeJsonError("MISSING_FIELD", "id or uuid is required", {});
+    } else {
+      writePlainError("MISSING_FIELD: id or uuid is required");
+    }
+    process.exit(1);
+  }
+
+  // Read-only: do NOT auto-init
+  const dir = resolveStoreDir(process.cwd());
+  const task = findTask(dir, idOrUuid);
+
+  if (!task) {
+    if (jsonFlag) {
+      writeJsonError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
+    } else {
+      writePlainError(`NOT_FOUND: task not found: ${idOrUuid}`);
+    }
+    process.exit(1);
+  }
+
+  if (jsonFlag) {
+    process.stdout.write(JSON.stringify(task) + "\n");
+  } else {
+    // Human renderer is M2; for now just show a basic summary
+    process.stdout.write(`#${task.id} ${task.title} [${task.column}]\n`);
+  }
 }
 
 process.exit(0);
