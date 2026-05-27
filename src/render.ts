@@ -1,4 +1,5 @@
 import type { TaskData } from "./store.ts";
+import { COLUMNS } from "./store.ts";
 
 /**
  * Options for {@link renderTask}.
@@ -49,6 +50,39 @@ export function renderList(tasks: TaskData[], options: RenderOptions): string {
     const id = style(`#${task.id}`, ANSI.bold, color);
     const col = style(task.column.padEnd(8, " "), ANSI.cyan, color);
     lines.push(`${id}  ${col}  ${task.title}`);
+  }
+
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * Render a board view as stacked sections: one section per column in canonical
+ * order. Each section shows the column name as a header, then one task per line
+ * as `  #<id> <title>`. Empty columns show `  (empty)`.
+ *
+ * Pinned layout:
+ *   backlog
+ *     #1 alpha
+ *     #2 beta
+ *   ready
+ *     (empty)
+ *   ...
+ */
+export function renderBoard(grouped: Record<string, TaskData[]>, options: RenderOptions): string {
+  const color = options.color === true;
+  const lines: string[] = [];
+
+  for (const col of COLUMNS) {
+    const tasks = grouped[col] ?? [];
+    lines.push(style(col, ANSI.bold, color));
+    if (tasks.length === 0) {
+      lines.push(`  ${style("(empty)", ANSI.dim, color)}`);
+    } else {
+      for (const task of tasks) {
+        const id = style(`#${task.id}`, ANSI.bold, color);
+        lines.push(`  ${id} ${task.title}`);
+      }
+    }
   }
 
   return lines.join("\n") + "\n";

@@ -359,6 +359,23 @@ export function findAllTasks(dir: string): TaskData[] {
 }
 
 /**
+ * Group an array of tasks by column into a Record with all six column keys.
+ * Each key is always present (empty array if no tasks in that column).
+ */
+export function groupTasksByColumn(tasks: TaskData[]): Record<string, TaskData[]> {
+  const grouped: Record<string, TaskData[]> = {};
+  for (const col of COLUMNS) {
+    grouped[col] = [];
+  }
+  for (const task of tasks) {
+    if (grouped[task.column]) {
+      grouped[task.column].push(task);
+    }
+  }
+  return grouped;
+}
+
+/**
  * Find a task by short id (positive integer string) or UUID.
  * Walks all six column directories.
  * Returns TaskData (with normalized defaults) or null if not found.
