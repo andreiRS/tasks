@@ -379,10 +379,11 @@ if (command === "new") {
   }
 } else if (command === "rm") {
   const jsonFlag = rest.includes("--json");
-  const idOrUuid = rest.find((a) => a !== "--json") ?? "";
+  const forceFlag = rest.includes("--force");
+  const idOrUuid = rest.find((a) => a !== "--json" && a !== "--force") ?? "";
 
   if (!idOrUuid) {
-    const msg = "usage: tasks rm <id|uuid>";
+    const msg = "usage: tasks rm <id|uuid> [--force]";
     if (jsonFlag) {
       writeJsonError("MISSING_FIELD", msg, {});
     } else {
@@ -421,7 +422,11 @@ if (command === "new") {
   }
 
   try {
-    await removeTask(dir, idOrUuid);
+    const { affected } = await removeTask(dir, idOrUuid, forceFlag);
+    // Print affected (modified) tasks to stderr when force-stripping dependents
+    for (const t of affected) {
+      process.stderr.write(`affected: #${t.id} ${t.title}\n`);
+    }
   } catch (err) {
     if (err instanceof TasksError) {
       if (jsonFlag) {

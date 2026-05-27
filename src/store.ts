@@ -474,10 +474,18 @@ export async function moveTask(dir: string, idOrUuid: string, targetColumn: stri
 /**
  * Remove a task from the store via `git rm` and commit atomically.
  * - Unknown id/uuid: throws TasksError with code NOT_FOUND.
+ * - If `force` is false and any task depends on this task: throws TasksError with code DEP_EXISTS.
+ * - If `force` is true: strips the target uuid from all dependents' deps arrays,
+ *   git-adds those modified files, then git-rms the target, all in ONE commit.
+ *   Returns affected (modified) dependent tasks.
  *
  * Acquires flock. Honors dirty-tree guard.
  */
-export async function removeTask(dir: string, idOrUuid: string): Promise<TaskData> {
+export async function removeTask(
+  dir: string,
+  idOrUuid: string,
+  force: boolean = false,
+): Promise<{ task: TaskData; affected: TaskData[] }> {
   return withLock(dir, async () => {
     // Dirty-tree guard inside the lock (definitive check)
     if (await isStoreDirty(dir)) {
@@ -494,7 +502,19 @@ export async function removeTask(dir: string, idOrUuid: string): Promise<TaskDat
       throw new TasksError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
     }
 
-    // Determine the filename
+    // Find all tasks whose deps include this task's uuid
+    const allTasks = findAllTasks(dir);
+    const dependents = allTasks.filter((t) => t.deps.includes(task.uuid));
+
+    if (!force && dependents.length > 0) {
+      throw new TasksError(
+        "DEP_EXISTS",
+        `task #${task.id} is depended on by ${dependents.length} task(s); use --force to delete and strip references`,
+        { dependents: dependents.map((t) => ({ id: t.id, uuid: t.uuid, title: t.title })) },
+      );
+    }
+
+    // Determine the filename of the task to remove
     const colDir = join(dir, task.column);
     const files = readdirSync(colDir).filter((f) => f.endsWith(".md"));
     const byShortId = /^\d+$/.test(idOrUuid);
@@ -517,9 +537,34 @@ export async function removeTask(dir: string, idOrUuid: string): Promise<TaskDat
       throw new TasksError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
     }
 
+    // If force: strip the target uuid from each dependent's deps, rewrite + stage
+    if (force && dependents.length > 0) {
+      for (const dep of dependents) {
+        const loc = findTaskFilename(dir, String(dep.uuid));
+        if (!loc) continue;
+        const depFilePath = join(dir, loc.column, loc.filename);
+        const raw = readFileSync(depFilePath, "utf-8");
+        const parts = raw.split(/^---\s*$/m);
+        if (parts.length < 3) continue;
+        const fm = yamlParse(parts[1]) as Record<string, unknown>;
+        const oldDeps = Array.isArray(fm.deps) ? (fm.deps as string[]) : [];
+        const newDeps = oldDeps.filter((u) => u !== task.uuid);
+        fm.deps = newDeps;
+        // Reconstruct file content: regenerate frontmatter with updated deps
+        // Replace only the deps line to preserve other field order/quoting
+        const depsYaml = newDeps.length === 0
+          ? "[]"
+          : `[${newDeps.map((u) => `"${u}"`).join(", ")}]`;
+        const newFmStr = parts[1].replace(/^deps:.*$/m, `deps: ${depsYaml}`);
+        const newContent = `---${newFmStr}---${parts.slice(2).join("---")}`;
+        writeFileSync(depFilePath, newContent, "utf-8");
+        await git(["add", `${loc.column}/${loc.filename}`], dir);
+      }
+    }
+
     const relPath = `${task.column}/${filename}`;
 
-    // git rm and commit
+    // git rm and commit (includes any staged dependent rewrites)
     const rmExit = await git(["rm", relPath], dir);
     if (rmExit !== 0) {
       throw new TasksError("GIT_ERROR", `git rm failed`, {});
@@ -527,7 +572,7 @@ export async function removeTask(dir: string, idOrUuid: string): Promise<TaskDat
 
     await git(["commit", "-m", `task: rm #${task.id} — ${task.title}`], dir);
 
-    return task;
+    return { task, affected: dependents };
   });
 }
 
