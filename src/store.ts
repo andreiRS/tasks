@@ -127,19 +127,6 @@ export async function ensureStore(dir: string): Promise<boolean> {
 }
 
 /**
- * Locate the system `flock(1)` binary. Searches PATH via `Bun.which`, then a
- * couple of well-known locations. Returns null if not found.
- */
-function findFlock(): string | null {
-  const found = Bun.which("flock");
-  if (found) return found;
-  for (const candidate of ["/opt/homebrew/bin/flock", "/usr/bin/flock", "/usr/local/bin/flock"]) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-/**
  * Return the path to flock(1) by searching only via PATH (Bun.which), or
  * throw a TasksError with code FLOCK_MISSING if it cannot be found.
  *
