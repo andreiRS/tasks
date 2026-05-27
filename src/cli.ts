@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
-import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, TasksError, COLUMNS } from "./store.ts";
+import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, TasksError, COLUMNS } from "./store.ts";
 import { renderTask, renderList, renderBoard } from "./render.ts";
 
 /**
@@ -308,6 +308,74 @@ if (command === "new") {
     process.stdout.write(JSON.stringify(grouped) + "\n");
   } else {
     process.stdout.write(renderBoard(grouped, { color: shouldColor() }));
+  }
+} else if (command === "mv") {
+  const jsonFlag = rest.includes("--json");
+  const posArgs = rest.filter((a) => a !== "--json");
+  const [idOrUuid, targetColumn] = posArgs;
+
+  if (!idOrUuid || !targetColumn) {
+    const msg = "usage: tasks mv <id|uuid> <column>";
+    if (jsonFlag) {
+      writeJsonError("MISSING_FIELD", msg, {});
+    } else {
+      writePlainError(`MISSING_FIELD: ${msg}`);
+    }
+    process.exit(1);
+  }
+
+  // Validate column up front before touching the store
+  if (!COLUMNS.includes(targetColumn)) {
+    const msg = `unknown column: ${targetColumn}. Valid columns: ${COLUMNS.join(", ")}`;
+    if (jsonFlag) {
+      writeJsonError("INVALID_COLUMN", msg, { column: targetColumn, valid: COLUMNS });
+    } else {
+      writePlainError(`INVALID_COLUMN: ${msg}`);
+    }
+    process.exit(1);
+  }
+
+  // Check flock availability
+  try {
+    findFlockOrFail();
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        process.stderr.write(`${err.message}\n`);
+      }
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  const dir = storeDir(process.cwd());
+  await ensureStore(dir);
+
+  // Early dirty-tree check (outside lock) for a fast, clear error message
+  if (await isStoreDirty(dir)) {
+    const msg = "store working tree is dirty; commit or discard pending changes before running mutating commands";
+    if (jsonFlag) {
+      writeJsonError("STORE_DIRTY", msg, {});
+    } else {
+      process.stderr.write(`tasks: STORE_DIRTY: ${msg}\n`);
+    }
+    process.exit(1);
+  }
+
+  try {
+    await moveTask(dir, idOrUuid, targetColumn);
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        writePlainError(`${err.code}: ${err.message}`);
+      }
+      process.exit(1);
+    }
+    throw err;
   }
 }
 

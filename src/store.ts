@@ -376,6 +376,101 @@ export function groupTasksByColumn(tasks: TaskData[]): Record<string, TaskData[]
 }
 
 /**
+ * Move a task to a different column via `git mv`, bump `updated_at`, and commit.
+ * - Same column: no-op (returns without committing).
+ * - Unknown id/uuid: throws TasksError with code NOT_FOUND.
+ *
+ * Acquires flock. Honors dirty-tree guard (caller must check outside if desired;
+ * this also checks inside the lock for the definitive guard).
+ */
+export async function moveTask(dir: string, idOrUuid: string, targetColumn: string): Promise<void> {
+  return withLock(dir, async () => {
+    // Dirty-tree guard inside the lock (definitive check)
+    if (await isStoreDirty(dir)) {
+      throw new TasksError(
+        "STORE_DIRTY",
+        "store working tree is dirty; commit or discard pending changes before running mutating commands",
+        {}
+      );
+    }
+
+    // Find the task
+    const task = findTask(dir, idOrUuid);
+    if (!task) {
+      throw new TasksError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
+    }
+
+    // Same-column no-op
+    if (task.column === targetColumn) {
+      return;
+    }
+
+    // Determine old and new paths. Need to find the actual filename.
+    const colDir = join(dir, task.column);
+    const files = readdirSync(colDir).filter((f) => f.endsWith(".md"));
+    const byShortId = /^\d+$/.test(idOrUuid);
+    const targetId = byShortId ? parseInt(idOrUuid, 10) : null;
+
+    let filename: string | null = null;
+    for (const f of files) {
+      const raw = readFileSync(join(colDir, f), "utf-8");
+      const parts = raw.split(/^---\s*$/m);
+      if (parts.length < 3) continue;
+      const fm = yamlParse(parts[1]) as Record<string, unknown>;
+      const matches = byShortId ? fm.id === targetId : fm.uuid === idOrUuid;
+      if (matches) {
+        filename = f;
+        break;
+      }
+    }
+
+    if (!filename) {
+      throw new TasksError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
+    }
+
+    const oldRelPath = `${task.column}/${filename}`;
+    const newRelPath = `${targetColumn}/${filename}`;
+    const newFilePath = join(dir, targetColumn, filename);
+
+    // Bump updated_at in the file content before moving
+    const oldFilePath = join(dir, task.column, filename);
+    const raw = readFileSync(oldFilePath, "utf-8");
+    const now = new Date().toISOString();
+    const updated = raw.replace(
+      /^(updated_at:\s*)(.+)$/m,
+      `$1${now}`
+    );
+
+    // Write updated content to new location, remove old file
+    writeFileSync(newFilePath, updated, "utf-8");
+    // Use git mv to move (we wrote the new file already, so we need to do this differently:
+    // write to new path, then git rm old + git add new)
+    // Actually: write to temp new, then use git mv + overwrite approach is tricky.
+    // Simpler: write new content to new path, then git rm old, git add new.
+    // But we already wrote newFilePath above - need to remove oldFilePath first so git mv works.
+    // Let's do: update in place, then git mv.
+
+    // Re-approach: update file in place (old path), then git mv old -> new
+    writeFileSync(oldFilePath, updated, "utf-8");
+    // Remove the file we wrote to new path
+    const { unlinkSync } = await import("node:fs");
+    unlinkSync(newFilePath);
+
+    // Stage the content update (modified in old location)
+    await git(["add", oldRelPath], dir);
+
+    // git mv old -> new
+    const mvExit = await git(["mv", oldRelPath, newRelPath], dir);
+    if (mvExit !== 0) {
+      throw new TasksError("GIT_ERROR", `git mv failed`, {});
+    }
+
+    // Commit
+    await git(["commit", "-m", `task: mv #${task.id} ${task.column} -> ${targetColumn}`], dir);
+  });
+}
+
+/**
  * Find a task by short id (positive integer string) or UUID.
  * Walks all six column directories.
  * Returns TaskData (with normalized defaults) or null if not found.
