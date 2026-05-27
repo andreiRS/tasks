@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { storeDir, ensureStore, createTask, resolveStoreDir, findTask, findFlockOrFail, TasksError } from "./store.ts";
+import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findFlockOrFail, TasksError } from "./store.ts";
 
 /**
  * Write a JSON error envelope to stderr.
@@ -62,6 +62,21 @@ if (command === "new") {
 
   const dir = storeDir(process.cwd());
   await ensureStore(dir);
+
+  // Dirty-tree guard: refuse to proceed if the store has uncommitted changes.
+  // Runs after ensureStore so the git repo exists, and after the lock would be
+  // acquired inside createTask. We check here (outside the lock) for an early,
+  // clear error message; the definitive guard is inside createTask's withLock.
+  if (await isStoreDirty(dir)) {
+    const msg = "store working tree is dirty; commit or discard pending changes before running mutating commands";
+    if (jsonFlag) {
+      writeJsonError("STORE_DIRTY", msg, {});
+    } else {
+      process.stderr.write(`tasks: STORE_DIRTY: ${msg}\n`);
+    }
+    process.exit(1);
+  }
+
   const id = await createTask(dir, title);
   process.stdout.write(`task: new #${id} — ${title}\n`);
 } else if (command === "show") {

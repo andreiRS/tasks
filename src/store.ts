@@ -196,6 +196,26 @@ async function withLock<T>(dir: string, fn: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Return true if the store's working tree has any uncommitted changes
+ * (staged or unstaged), false if the tree is clean.
+ *
+ * Runs `git status --porcelain` in the store directory. A non-empty
+ * output means the tree is dirty.
+ *
+ * Call this AFTER acquiring the flock (i.e. inside withLock) so
+ * concurrent invocations serialize the check.
+ */
+export async function isStoreDirty(dir: string): Promise<boolean> {
+  const proc = Bun.spawn(["git", "-C", dir, "status", "--porcelain"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await proc.exited;
+  const out = await new Response(proc.stdout).text();
+  return out.trim().length > 0;
+}
+
+/**
  * Create a new task in the store.
  * Allocates an ID from meta.yaml, writes the task file to backlog/,
  * updates meta.yaml, and commits both files atomically.

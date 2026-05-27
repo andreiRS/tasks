@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, realpathSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, realpathSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -206,4 +206,123 @@ test("tasks new writes task file, meta.yaml, and commits", async () => {
   const gitStatus = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: storeDir });
   const statusOut = new TextDecoder().decode(gitStatus.stdout).trim();
   expect(statusOut).toBe("");
+});
+
+// ─── Dirty-tree guard tests ───────────────────────────────────────────────────
+
+/**
+ * Helper: derive the store directory path for cwdDir inside tasksHome.
+ * Mirrors the encoding logic in store.ts: double `-`, then replace `/` with `-`.
+ */
+function getStoreDir(tasksHomeDir: string, cwdDirectory: string): string {
+  const realCwd = realpathSync(cwdDirectory);
+  const encoded = realCwd.replace(/-/g, "--").replace(/\//g, "-");
+  return join(tasksHomeDir, "projects", encoded);
+}
+
+test("tasks new refuses with STORE_DIRTY when store has staged uncommitted changes (plain-text mode)", async () => {
+  const cliPath = join(import.meta.dir, "..", "src", "cli.ts");
+
+  // Seed one task so the store is initialized and has at least one commit.
+  const seedProc = Bun.spawn(["bun", "run", cliPath, "new", "seed task"], {
+    env: { ...process.env, TASKS_HOME: tasksHome },
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: cwdDir,
+  });
+  const seedExit = await seedProc.exited;
+  if (seedExit !== 0) {
+    const err = await new Response(seedProc.stderr).text();
+    throw new Error(`seed failed (exit ${seedExit}): ${err}`);
+  }
+
+  const storeDir = getStoreDir(tasksHome, cwdDir);
+
+  // Record current commit count.
+  const logBefore = Bun.spawnSync(["git", "log", "--oneline"], { cwd: storeDir });
+  const commitsBefore = new TextDecoder().decode(logBefore.stdout).trim().split("\n").length;
+
+  // Dirty the working tree: write a file and stage it (staged = dirty).
+  writeFileSync(join(storeDir, "dirty.txt"), "x\n", "utf-8");
+  const addProc = Bun.spawnSync(["git", "-C", storeDir, "add", "dirty.txt"]);
+  if (addProc.exitCode !== 0) {
+    throw new Error("git add dirty.txt failed");
+  }
+
+  // Verify the tree really is dirty before the CLI call.
+  const statusCheck = Bun.spawnSync(["git", "-C", storeDir, "status", "--porcelain"]);
+  const statusOut = new TextDecoder().decode(statusCheck.stdout).trim();
+  expect(statusOut).not.toBe("");
+
+  // Now attempt tasks new: should fail with STORE_DIRTY.
+  const proc = Bun.spawn(["bun", "run", cliPath, "new", "should be blocked"], {
+    env: { ...process.env, TASKS_HOME: tasksHome },
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: cwdDir,
+  });
+  const [exitCode, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stderr).text(),
+  ]);
+
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("STORE_DIRTY");
+
+  // No new commit should have been made.
+  const logAfter = Bun.spawnSync(["git", "log", "--oneline"], { cwd: storeDir });
+  const commitsAfter = new TextDecoder().decode(logAfter.stdout).trim().split("\n").length;
+  expect(commitsAfter).toBe(commitsBefore);
+});
+
+test("tasks new refuses with STORE_DIRTY JSON envelope when store is dirty and --json is passed", async () => {
+  const cliPath = join(import.meta.dir, "..", "src", "cli.ts");
+
+  // Seed one task so the store is initialized.
+  const seedProc = Bun.spawn(["bun", "run", cliPath, "new", "seed task"], {
+    env: { ...process.env, TASKS_HOME: tasksHome },
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: cwdDir,
+  });
+  const seedExit = await seedProc.exited;
+  if (seedExit !== 0) {
+    const err = await new Response(seedProc.stderr).text();
+    throw new Error(`seed failed (exit ${seedExit}): ${err}`);
+  }
+
+  const storeDir = getStoreDir(tasksHome, cwdDir);
+
+  // Dirty the working tree: write a file and stage it.
+  writeFileSync(join(storeDir, "dirty2.txt"), "y\n", "utf-8");
+  const addProc = Bun.spawnSync(["git", "-C", storeDir, "add", "dirty2.txt"]);
+  if (addProc.exitCode !== 0) {
+    throw new Error("git add dirty2.txt failed");
+  }
+
+  // Attempt tasks new --json: should fail with JSON envelope containing STORE_DIRTY.
+  const proc = Bun.spawn(["bun", "run", cliPath, "new", "should be blocked", "--json"], {
+    env: { ...process.env, TASKS_HOME: tasksHome },
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: cwdDir,
+  });
+  const [exitCode, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stderr).text(),
+  ]);
+
+  expect(exitCode).not.toBe(0);
+
+  // stderr should be a valid JSON error envelope.
+  let parsed: Record<string, unknown>;
+  expect(() => { parsed = JSON.parse(stderr); }).not.toThrow();
+  parsed = JSON.parse(stderr);
+
+  expect(parsed).toHaveProperty("error");
+  const error = parsed.error as Record<string, unknown>;
+  expect(error.code).toBe("STORE_DIRTY");
+  expect(typeof error.message).toBe("string");
+  expect(typeof error.details).toBe("object");
+  expect(error.details).not.toBeNull();
 });
