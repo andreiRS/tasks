@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, closeSync, openSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { stringify as yamlStringify, parse as yamlParse } from "yaml";
@@ -98,11 +98,81 @@ export async function ensureStore(dir: string): Promise<boolean> {
   // git init
   await git(["init"], dir);
 
-  // Empty initial commit
-  await git(["commit", "--allow-empty", "-m", "init"], dir);
+  // Ignore the lock file — flock(1) needs a real file on disk, but we don't
+  // want it tracked or showing up in `git status`.
+  writeFileSync(join(dir, ".gitignore"), ".tasks-lock\n", "utf-8");
+  await git(["add", ".gitignore"], dir);
+
+  // Initial commit (includes .gitignore)
+  await git(["commit", "-m", "init"], dir);
 
   process.stderr.write(`tasks: initialized store at ${dir}\n`);
   return true;
+}
+
+/**
+ * Locate the system `flock(1)` binary. Searches PATH via `Bun.which`, then a
+ * couple of well-known locations. Returns null if not found.
+ *
+ * Note: hardened "flock missing → actionable error" is a future cycle; callers
+ * may throw a generic error if this returns null.
+ */
+function findFlock(): string | null {
+  const found = Bun.which("flock");
+  if (found) return found;
+  for (const candidate of ["/opt/homebrew/bin/flock", "/usr/bin/flock", "/usr/local/bin/flock"]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Acquire an exclusive flock on `<storeDir>/.tasks-lock`, run `fn`, then release.
+ *
+ * Implementation: spawn `flock -x <lockfile> cat` with stdin piped. flock(1)
+ * only execs `cat` AFTER acquiring the lock, so we synchronize by writing a
+ * byte to stdin and reading it back from stdout — once we see the echo, `cat`
+ * is running which means the lock is held. When `fn` completes we close stdin,
+ * `cat` exits, and flock releases the lock.
+ */
+async function withLock<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+  const lockPath = join(dir, ".tasks-lock");
+  // Ensure the lock file exists (flock needs an fd to flock on)
+  if (!existsSync(lockPath)) {
+    closeSync(openSync(lockPath, "w"));
+  }
+
+  const flockBin = findFlock();
+  if (!flockBin) {
+    throw new Error("flock not found on PATH");
+  }
+
+  const lockProc = Bun.spawn([flockBin, "-x", lockPath, "cat"], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  // Synchronize: write a byte and read it echoed back from `cat` — confirms
+  // `cat` is running, which means flock has acquired the lock.
+  const sink = lockProc.stdin as unknown as {
+    write: (chunk: string | Uint8Array) => number;
+    flush: () => Promise<number> | number;
+    end: () => void;
+  };
+  sink.write("x");
+  await sink.flush();
+
+  const reader = lockProc.stdout.getReader();
+  await reader.read();
+  reader.releaseLock();
+
+  try {
+    return await fn();
+  } finally {
+    sink.end();
+    await lockProc.exited;
+  }
 }
 
 /**
@@ -113,44 +183,46 @@ export async function ensureStore(dir: string): Promise<boolean> {
  * Returns the short id of the new task.
  */
 export async function createTask(dir: string, title: string): Promise<number> {
-  // Read or initialize meta.yaml
-  const metaPath = join(dir, "meta.yaml");
-  let nextId = 1;
-  if (existsSync(metaPath)) {
-    const raw = readFileSync(metaPath, "utf-8");
-    const match = raw.match(/next_id:\s*(\d+)/);
-    if (match) {
-      nextId = parseInt(match[1], 10);
+  return withLock(dir, async () => {
+    // Read or initialize meta.yaml
+    const metaPath = join(dir, "meta.yaml");
+    let nextId = 1;
+    if (existsSync(metaPath)) {
+      const raw = readFileSync(metaPath, "utf-8");
+      const match = raw.match(/next_id:\s*(\d+)/);
+      if (match) {
+        nextId = parseInt(match[1], 10);
+      }
     }
-  }
 
-  const id = nextId;
-  const uuid = randomUUID();
-  const now = new Date().toISOString();
-  const slug = slugify(title);
-  const filename = `${id}-${slug}.md`;
-  const taskPath = join(dir, "backlog", filename);
+    const id = nextId;
+    const uuid = randomUUID();
+    const now = new Date().toISOString();
+    const slug = slugify(title);
+    const filename = `${id}-${slug}.md`;
+    const taskPath = join(dir, "backlog", filename);
 
-  const frontmatter = yamlStringify({
-    id,
-    uuid,
-    title,
-    created_at: now,
-    updated_at: now,
+    const frontmatter = yamlStringify({
+      id,
+      uuid,
+      title,
+      created_at: now,
+      updated_at: now,
+    });
+
+    const fileContent = `---\n${frontmatter}---\n`;
+    writeFileSync(taskPath, fileContent, "utf-8");
+
+    // Update meta.yaml
+    writeFileSync(metaPath, `next_id: ${id + 1}\n`, "utf-8");
+
+    // Stage both files and commit
+    const taskRelPath = `backlog/${filename}`;
+    await git(["add", taskRelPath, "meta.yaml"], dir);
+    await git(["commit", "-m", `task: new #${id} — ${title}`], dir);
+
+    return id;
   });
-
-  const fileContent = `---\n${frontmatter}---\n`;
-  writeFileSync(taskPath, fileContent, "utf-8");
-
-  // Update meta.yaml
-  writeFileSync(metaPath, `next_id: ${id + 1}\n`, "utf-8");
-
-  // Stage both files and commit
-  const taskRelPath = `backlog/${filename}`;
-  await git(["add", taskRelPath, "meta.yaml"], dir);
-  await git(["commit", "-m", `task: new #${id} — ${title}`], dir);
-
-  return id;
 }
 
 // ─── Task data type (structured output) ──────────────────────────────────────
