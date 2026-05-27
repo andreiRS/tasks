@@ -29,6 +29,32 @@ function style(s: string, code: string, color: boolean): string {
 }
 
 /**
+ * Render a flat list of tasks as a human-readable string.
+ *
+ * Each task is one line: `#<id>  <column padded>  <title>`
+ * An empty task array renders as a single `(no tasks)` line.
+ *
+ * When `options.color` is true, the column name is styled with cyan and the
+ * id prefix is bold. Stripping ANSI from a colored render yields the plain render.
+ */
+export function renderList(tasks: TaskData[], options: RenderOptions): string {
+  const color = options.color === true;
+
+  if (tasks.length === 0) {
+    return "(no tasks)\n";
+  }
+
+  const lines: string[] = [];
+  for (const task of tasks) {
+    const id = style(`#${task.id}`, ANSI.bold, color);
+    const col = style(task.column.padEnd(8, " "), ANSI.cyan, color);
+    lines.push(`${id}  ${col}  ${task.title}`);
+  }
+
+  return lines.join("\n") + "\n";
+}
+
+/**
  * Render a normalized task as a human-readable string.
  *
  * Layout (pinned by tests):

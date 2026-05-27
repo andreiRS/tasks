@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
-import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findFlockOrFail, TasksError } from "./store.ts";
-import { renderTask } from "./render.ts";
+import { existsSync } from "node:fs";
+import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, findFlockOrFail, TasksError } from "./store.ts";
+import { renderTask, renderList } from "./render.ts";
 
 /**
  * Write a JSON error envelope to stderr.
@@ -126,6 +127,44 @@ if (command === "new") {
     process.stdout.write(JSON.stringify(task) + "\n");
   } else {
     process.stdout.write(renderTask(task, { color: shouldColor() }));
+  }
+} else if (command === "list") {
+  const jsonFlag = rest.includes("--json");
+  const noColorFlag = rest.includes("--no-color");
+
+  /**
+   * Decide whether to emit ANSI color. Same precedence as `show`:
+   *   1. `--no-color` always wins (force off).
+   *   2. `NO_COLOR` env var set to any value wins (force off).
+   *   3. `FORCE_COLOR=1` forces on even when stdout is not a TTY.
+   *   4. Otherwise: color iff stdout is a TTY.
+   */
+  function shouldColor(): boolean {
+    if (noColorFlag) return false;
+    if (process.env.NO_COLOR !== undefined && process.env.NO_COLOR !== "") return false;
+    if (process.env.FORCE_COLOR === "1") return true;
+    return Boolean(process.stdout.isTTY);
+  }
+
+  // Read-only: do NOT auto-init. Return error if store does not exist.
+  const dir = resolveStoreDir(process.cwd());
+
+  if (!existsSync(dir)) {
+    const msg = "store not initialized; run `tasks new` to create it";
+    if (jsonFlag) {
+      writeJsonError("NOT_INITIALIZED", msg, {});
+    } else {
+      writePlainError(`NOT_INITIALIZED: ${msg}`);
+    }
+    process.exit(1);
+  }
+
+  const tasks = findAllTasks(dir);
+
+  if (jsonFlag) {
+    process.stdout.write(JSON.stringify(tasks) + "\n");
+  } else {
+    process.stdout.write(renderList(tasks, { color: shouldColor() }));
   }
 }
 

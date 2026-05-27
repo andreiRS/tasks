@@ -301,6 +301,64 @@ function parseTaskFile(content: string): { fm: Record<string, unknown>; body: st
 }
 
 /**
+ * Return all tasks in the store, grouped by column in canonical order
+ * (backlog, ready, doing, blocked, review, done), and within each column
+ * sorted by filename (which starts with the numeric id, giving stable ordering).
+ *
+ * Returns an empty array if the store does not exist.
+ * Does NOT auto-initialize the store.
+ */
+export function findAllTasks(dir: string): TaskData[] {
+  if (!existsSync(dir)) {
+    return [];
+  }
+
+  const results: TaskData[] = [];
+
+  for (const col of COLUMNS) {
+    const colDir = join(dir, col);
+    if (!existsSync(colDir)) continue;
+
+    let files: string[];
+    try {
+      files = readdirSync(colDir)
+        .filter((f) => f.endsWith(".md"))
+        .sort(); // lexicographic = id-ascending for numeric-prefixed filenames
+    } catch {
+      continue;
+    }
+
+    for (const filename of files) {
+      const filePath = join(colDir, filename);
+      let raw: string;
+      try {
+        raw = readFileSync(filePath, "utf-8");
+      } catch {
+        continue;
+      }
+
+      const { fm, body } = parseTaskFile(raw);
+      if (typeof fm.id !== "number") continue; // skip unparseable files
+
+      results.push({
+        id: fm.id as number,
+        uuid: fm.uuid as string,
+        title: fm.title as string,
+        column: col,
+        created_at: fm.created_at as string,
+        updated_at: fm.updated_at as string,
+        body,
+        deps: Array.isArray(fm.deps) ? (fm.deps as string[]) : [],
+        agent_ready: typeof fm.agent_ready === "boolean" ? fm.agent_ready : false,
+        human_in_loop: typeof fm.human_in_loop === "boolean" ? fm.human_in_loop : false,
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
  * Find a task by short id (positive integer string) or UUID.
  * Walks all six column directories.
  * Returns TaskData (with normalized defaults) or null if not found.
