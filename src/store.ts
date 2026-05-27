@@ -246,6 +246,7 @@ export async function createTask(dir: string, title: string): Promise<number> {
       id,
       uuid,
       title,
+      deps: [],
       created_at: now,
       updated_at: now,
     });
@@ -563,6 +564,80 @@ export function findTaskFilename(
 }
 
 /**
+ * Validate the dependency graph across all tasks in the store.
+ *
+ * Rules:
+ *   - Every uuid referenced in a task's `deps` must correspond to an existing
+ *     task in the store. Otherwise: throws TasksError(code=UNKNOWN_UUID).
+ *   - The directed graph (edge: task -> dep) must be acyclic. A self-loop
+ *     counts as a cycle. Otherwise: throws TasksError(code=CYCLE_DETECTED).
+ *
+ * Detection: iterative DFS with white/gray/black colors. The first offending
+ * uuid (unknown or back-edge target) is surfaced in `details.uuid` for clearer
+ * error envelopes.
+ */
+export function validateGraph(tasks: TaskData[]): void {
+  const known = new Set(tasks.map((t) => t.uuid));
+
+  // Unknown UUID check across all edges.
+  for (const t of tasks) {
+    for (const dep of t.deps) {
+      if (!known.has(dep)) {
+        throw new TasksError(
+          "UNKNOWN_UUID",
+          `task ${t.uuid} references unknown uuid: ${dep}`,
+          { uuid: dep, referencedBy: t.uuid },
+        );
+      }
+    }
+  }
+
+  // Cycle detection (DFS, white/gray/black).
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color = new Map<string, number>();
+  for (const t of tasks) color.set(t.uuid, WHITE);
+  const adj = new Map<string, string[]>();
+  for (const t of tasks) adj.set(t.uuid, t.deps);
+
+  function dfs(start: string): string | null {
+    const stack: { node: string; idx: number }[] = [{ node: start, idx: 0 }];
+    color.set(start, GRAY);
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      const neighbors = adj.get(frame.node) ?? [];
+      if (frame.idx >= neighbors.length) {
+        color.set(frame.node, BLACK);
+        stack.pop();
+        continue;
+      }
+      const next = neighbors[frame.idx++];
+      const c = color.get(next) ?? WHITE;
+      if (c === GRAY) {
+        return next; // back-edge → cycle
+      }
+      if (c === WHITE) {
+        color.set(next, GRAY);
+        stack.push({ node: next, idx: 0 });
+      }
+    }
+    return null;
+  }
+
+  for (const t of tasks) {
+    if ((color.get(t.uuid) ?? WHITE) === WHITE) {
+      const cycleNode = dfs(t.uuid);
+      if (cycleNode !== null) {
+        throw new TasksError(
+          "CYCLE_DETECTED",
+          `dependency cycle detected involving uuid: ${cycleNode}`,
+          { uuid: cycleNode },
+        );
+      }
+    }
+  }
+}
+
+/**
  * The validateTitle rules shared between `new` and `edit`.
  * Returns null if valid, or an error message otherwise.
  */
@@ -683,6 +758,11 @@ export async function editTask(
     // If updated_at bump resulted in identical content (rare; e.g. user already
     // set updated_at to now), still proceed since other content differs.
     writeFileSync(filePath, bumped, "utf-8");
+
+    // Validate the graph across all on-disk tasks (post-mutation state). If
+    // validation fails, leave the bad file on disk (mirrors INVALID_TITLE) so
+    // the user can `tasks edit --abort` or re-edit in place; do not commit.
+    validateGraph(findAllTasks(dir));
 
     const oldRelPath = `${column}/${filename}`;
 
