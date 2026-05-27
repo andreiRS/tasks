@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, closeSync, openSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, closeSync, openSync, renameSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { stringify as yamlStringify, parse as yamlParse } from "yaml";
@@ -527,6 +527,195 @@ export async function removeTask(dir: string, idOrUuid: string): Promise<TaskDat
     await git(["commit", "-m", `task: rm #${task.id} — ${task.title}`], dir);
 
     return task;
+  });
+}
+
+/**
+ * Locate the on-disk filename for a task by short id or UUID.
+ * Returns null if not found.
+ */
+export function findTaskFilename(
+  dir: string,
+  idOrUuid: string,
+): { column: string; filename: string } | null {
+  if (!existsSync(dir)) return null;
+  const byShortId = /^\d+$/.test(idOrUuid);
+  const targetId = byShortId ? parseInt(idOrUuid, 10) : null;
+  for (const col of COLUMNS) {
+    const colDir = join(dir, col);
+    if (!existsSync(colDir)) continue;
+    let files: string[];
+    try {
+      files = readdirSync(colDir).filter((f) => f.endsWith(".md"));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      const raw = readFileSync(join(colDir, f), "utf-8");
+      const parts = raw.split(/^---\s*$/m);
+      if (parts.length < 3) continue;
+      const fm = yamlParse(parts[1]) as Record<string, unknown>;
+      const matches = byShortId ? fm.id === targetId : fm.uuid === idOrUuid;
+      if (matches) return { column: col, filename: f };
+    }
+  }
+  return null;
+}
+
+/**
+ * The validateTitle rules shared between `new` and `edit`.
+ * Returns null if valid, or an error message otherwise.
+ */
+export function validateTitle(title: unknown): string | null {
+  if (typeof title !== "string") return "title is required";
+  if (title.trim() === "") return "title is required";
+  if (/[\n\r]/.test(title)) return "title must be a single line (no newline characters)";
+  if (title.length > 200) return `title must be 200 characters or fewer (got ${title.length})`;
+  return null;
+}
+
+/**
+ * Compute the on-disk slug for a title (exposed for `edit` so renames stay in
+ * sync with `new`).
+ */
+export function titleSlug(title: string): string {
+  return slugify(title);
+}
+
+/**
+ * `tasks edit --abort`: discard all pending working-tree changes in the store
+ * and reset to HEAD. Does NOT acquire the flock — abort is a recovery path.
+ */
+export async function abortPendingEdits(dir: string): Promise<void> {
+  if (!existsSync(join(dir, ".git"))) return;
+  await git(["checkout", "--", "."], dir);
+}
+
+/**
+ * The editor-runner contract. The runner is given the absolute path to the
+ * task file and should return the editor's exit code. Throwing is allowed and
+ * surfaced as EDITOR_FAILED by the caller.
+ */
+export type EditorRunner = (filePath: string) => Promise<number>;
+
+/**
+ * Edit a task by round-tripping through `$EDITOR` (via the injected runner).
+ *
+ * Returns a discriminated outcome:
+ *   - { kind: "noop" }: file unchanged after the editor exited.
+ *   - { kind: "committed", titleChanged }: file changed, validated, committed.
+ *
+ * Errors throw TasksError with codes: NOT_FOUND, EDITOR_FAILED, INVALID_TITLE.
+ * On INVALID_TITLE the bad file is left as-is on disk per PRD.
+ *
+ * Exempt from the STORE_DIRTY guard. Acquires the flock.
+ */
+export async function editTask(
+  dir: string,
+  idOrUuid: string,
+  runEditor: EditorRunner,
+): Promise<{ kind: "noop" } | { kind: "committed"; titleChanged: boolean }> {
+  return withLock(dir, async () => {
+    const loc = findTaskFilename(dir, idOrUuid);
+    if (!loc) {
+      throw new TasksError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
+    }
+    const { column, filename } = loc;
+    const filePath = join(dir, column, filename);
+    const before = readFileSync(filePath, "utf-8");
+
+    // Run editor. Any throw or non-zero exit → EDITOR_FAILED.
+    let exit: number;
+    try {
+      exit = await runEditor(filePath);
+    } catch (err) {
+      throw new TasksError(
+        "EDITOR_FAILED",
+        `editor failed: ${err instanceof Error ? err.message : String(err)}`,
+        {},
+      );
+    }
+    if (exit !== 0) {
+      throw new TasksError("EDITOR_FAILED", `editor exited with code ${exit}`, { exit });
+    }
+
+    const after = readFileSync(filePath, "utf-8");
+    if (after === before) {
+      return { kind: "noop" };
+    }
+
+    // Parse and validate. Bad title → leave file as-is, throw.
+    const parts = after.split(/^---\s*$/m);
+    if (parts.length < 3) {
+      throw new TasksError("INVALID_TITLE", "task file is missing YAML frontmatter", {});
+    }
+    let fm: Record<string, unknown>;
+    try {
+      fm = yamlParse(parts[1]) as Record<string, unknown>;
+    } catch (err) {
+      throw new TasksError(
+        "INVALID_TITLE",
+        `invalid YAML frontmatter: ${err instanceof Error ? err.message : String(err)}`,
+        {},
+      );
+    }
+    const titleErr = validateTitle(fm.title);
+    if (titleErr !== null) {
+      throw new TasksError("INVALID_TITLE", titleErr, {});
+    }
+
+    const oldFm = yamlParse((before.split(/^---\s*$/m))[1]) as Record<string, unknown>;
+    const oldTitle = oldFm.title as string;
+    const newTitle = fm.title as string;
+    const titleChanged = oldTitle !== newTitle;
+
+    // Bump updated_at on the new content.
+    const now = new Date().toISOString();
+    let bumped = after.replace(/^(updated_at:\s*)(.+)$/m, `$1${now}`);
+    if (!/^updated_at:/m.test(bumped)) {
+      // Insert into frontmatter just before closing ---
+      const fmEndIdx = bumped.indexOf("\n---", bumped.indexOf("---") + 3);
+      if (fmEndIdx !== -1) {
+        bumped = bumped.slice(0, fmEndIdx) + `\nupdated_at: ${now}` + bumped.slice(fmEndIdx);
+      }
+    }
+
+    // If updated_at bump resulted in identical content (rare; e.g. user already
+    // set updated_at to now), still proceed since other content differs.
+    writeFileSync(filePath, bumped, "utf-8");
+
+    const oldRelPath = `${column}/${filename}`;
+
+    if (titleChanged) {
+      const newSlug = slugify(newTitle);
+      const id = oldFm.id as number;
+      const newFilename = `${id}-${newSlug}.md`;
+      const newRelPath = `${column}/${newFilename}`;
+      const newFilePath = join(dir, column, newFilename);
+
+      if (newFilename !== filename) {
+        // Stage the content modification first so git mv sees the modified content.
+        await git(["add", oldRelPath], dir);
+        const mvExit = await git(["mv", oldRelPath, newRelPath], dir);
+        if (mvExit !== 0) {
+          // Fall back: manual rename + git add/rm
+          renameSync(filePath, newFilePath);
+          await git(["rm", oldRelPath], dir);
+          await git(["add", newRelPath], dir);
+        }
+      } else {
+        // Slug unchanged (title differs only in case/punctuation that maps to same slug)
+        await git(["add", oldRelPath], dir);
+      }
+    } else {
+      await git(["add", oldRelPath], dir);
+    }
+
+    // Commit ONLY what's staged for this task — leaves any pre-existing dirty
+    // tree alone (PRD: edit is exempt from STORE_DIRTY).
+    await git(["commit", "-m", `task: edit #${oldFm.id}`], dir);
+
+    return { kind: "committed", titleChanged };
   });
 }
 
