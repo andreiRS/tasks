@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, realpathSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -59,7 +59,7 @@ async function runTasks(args: string[]): Promise<{ exitCode: number; stdout: str
 test("tasks show 1 --json returns structured task with correct fields", async () => {
   await seedTask("hello world");
 
-  const { exitCode, stdout, stderr } = await runTasks(["show", "1", "--json"]);
+  const { exitCode, stdout } = await runTasks(["show", "1", "--json"]);
 
   expect(exitCode).toBe(0);
 
@@ -125,7 +125,7 @@ test("tasks show <uuid> --json returns the same task as show 1 --json", async ()
 test("tasks show 999 --json exits non-zero with JSON error envelope NOT_FOUND", async () => {
   await seedTask("hello world");
 
-  const { exitCode, stdout, stderr } = await runTasks(["show", "999", "--json"]);
+  const { exitCode, stderr } = await runTasks(["show", "999", "--json"]);
 
   expect(exitCode).not.toBe(0);
 
@@ -146,7 +146,7 @@ test("tasks show 999 --json exits non-zero with JSON error envelope NOT_FOUND", 
 test("tasks show 999 without --json exits non-zero with plain-text NOT_FOUND on stderr", async () => {
   await seedTask("hello world");
 
-  const { exitCode, stdout, stderr } = await runTasks(["show", "999"]);
+  const { exitCode, stderr } = await runTasks(["show", "999"]);
 
   expect(exitCode).not.toBe(0);
   expect(stderr).toContain("NOT_FOUND");
