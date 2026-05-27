@@ -17,7 +17,7 @@ afterEach(() => {
   rmSync(cwdDir, { recursive: true, force: true });
 });
 
-test("tasks new with no title exits non-zero with INVALID_TITLE", async () => {
+test("tasks new with no title exits non-zero with INVALID_TITLE and does not create store", async () => {
   const proc = Bun.spawn(["bun", "run", "src/cli.ts", "new"], {
     env: { ...process.env, TASKS_HOME: tasksHome },
     stdout: "pipe",
@@ -30,6 +30,75 @@ test("tasks new with no title exits non-zero with INVALID_TITLE", async () => {
 
   expect(exitCode).not.toBe(0);
   expect(stderr).toContain("INVALID_TITLE");
+
+  // Validation must run before auto-init: no store dir should be created
+  const projectsDir = join(tasksHome, "projects");
+  expect(existsSync(projectsDir)).toBe(false);
+});
+
+test("tasks new with multi-line title exits non-zero with INVALID_TITLE and does not create store", async () => {
+  const cliPath = join(import.meta.dir, "..", "src", "cli.ts");
+  const proc = Bun.spawn(["bun", "run", cliPath, "new", "first line\nsecond line"], {
+    env: { ...process.env, TASKS_HOME: tasksHome },
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: cwdDir,
+  });
+
+  const exitCode = await proc.exited;
+  const stderr = await new Response(proc.stderr).text();
+
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("INVALID_TITLE");
+
+  // Validation must run before auto-init: no projects dir created
+  const projectsDir = join(tasksHome, "projects");
+  expect(existsSync(projectsDir)).toBe(false);
+});
+
+test("tasks new with title exceeding 200 chars exits non-zero with INVALID_TITLE and does not create store", async () => {
+  const cliPath = join(import.meta.dir, "..", "src", "cli.ts");
+  const longTitle = "a".repeat(201);
+  const proc = Bun.spawn(["bun", "run", cliPath, "new", longTitle], {
+    env: { ...process.env, TASKS_HOME: tasksHome },
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: cwdDir,
+  });
+
+  const exitCode = await proc.exited;
+  const stderr = await new Response(proc.stderr).text();
+
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("INVALID_TITLE");
+
+  // Validation must run before auto-init: no projects dir created
+  const projectsDir = join(tasksHome, "projects");
+  expect(existsSync(projectsDir)).toBe(false);
+});
+
+test("tasks new with exactly 200-char title succeeds (boundary)", async () => {
+  const cliPath = join(import.meta.dir, "..", "src", "cli.ts");
+  const boundaryTitle = "a".repeat(200);
+  const proc = Bun.spawn(["bun", "run", cliPath, "new", boundaryTitle], {
+    env: { ...process.env, TASKS_HOME: tasksHome },
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: cwdDir,
+  });
+
+  const exitCode = await proc.exited;
+  const stdout = await new Response(proc.stdout).text();
+
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain("#1");
+
+  // A task file should exist in backlog/
+  const realCwdDir = realpathSync(cwdDir);
+  const encodedCwd = realCwdDir.replace(/-/g, "--").replace(/\//g, "-");
+  const storeDir = join(tasksHome, "projects", encodedCwd);
+  const backlogFiles = readdirSync(join(storeDir, "backlog"));
+  expect(backlogFiles).toHaveLength(1);
 });
 
 test("tasks new auto-initializes the store on first invocation", async () => {
