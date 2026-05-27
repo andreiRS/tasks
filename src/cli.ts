@@ -83,7 +83,22 @@ if (command === "new") {
 } else if (command === "show") {
   // Determine whether --json was passed and get the id/uuid argument
   const jsonFlag = rest.includes("--json");
-  const idOrUuid = rest.find((a) => a !== "--json") ?? "";
+  const noColorFlag = rest.includes("--no-color");
+  const idOrUuid = rest.find((a) => a !== "--json" && a !== "--no-color") ?? "";
+
+  /**
+   * Decide whether to emit ANSI color. Precedence:
+   *   1. `--no-color` always wins (force off).
+   *   2. `NO_COLOR` env var set to any value wins (force off).
+   *   3. `FORCE_COLOR=1` forces on even when stdout is not a TTY.
+   *   4. Otherwise: color iff stdout is a TTY.
+   */
+  function shouldColor(): boolean {
+    if (noColorFlag) return false;
+    if (process.env.NO_COLOR !== undefined && process.env.NO_COLOR !== "") return false;
+    if (process.env.FORCE_COLOR === "1") return true;
+    return Boolean(process.stdout.isTTY);
+  }
 
   if (!idOrUuid) {
     if (jsonFlag) {
@@ -110,7 +125,7 @@ if (command === "new") {
   if (jsonFlag) {
     process.stdout.write(JSON.stringify(task) + "\n");
   } else {
-    process.stdout.write(renderTask(task));
+    process.stdout.write(renderTask(task, { color: shouldColor() }));
   }
 }
 

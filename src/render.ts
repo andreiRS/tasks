@@ -1,7 +1,35 @@
 import type { TaskData } from "./store.ts";
 
 /**
- * Render a normalized task as a plain-text, human-readable string.
+ * Options for {@link renderTask}.
+ *
+ * When `color` is true, the renderer wraps select substrings in ANSI escape
+ * sequences. When false (the default), the output is plain text with no ANSI.
+ */
+export interface RenderOptions {
+  color?: boolean;
+}
+
+// Minimal ANSI palette. Hand-rolled, no third-party color library.
+const ANSI = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  cyan: "\x1b[36m",
+} as const;
+
+/**
+ * Wrap `s` in the given ANSI style codes when `color` is true, otherwise
+ * return `s` unchanged. The styling layer is purely decorative: stripping
+ * ANSI escapes from a colored render must yield byte-for-byte the same
+ * string as the plain render.
+ */
+function style(s: string, code: string, color: boolean): string {
+  return color ? `${code}${s}${ANSI.reset}` : s;
+}
+
+/**
+ * Render a normalized task as a human-readable string.
  *
  * Layout (pinned by tests):
  *   #<id> <title>
@@ -18,19 +46,20 @@ import type { TaskData } from "./store.ts";
  *   <blank line>
  *   <body, or nothing if empty>
  *
- * Color-agnostic: returns plain text. A future cycle will introduce
- * `colorize(text, style)` and wrap selected substrings; the layout
- * itself will not change.
+ * When `options.color` is true, the title line is bold and the metadata
+ * field labels are dim. The layout is identical in both modes.
  */
-export function renderTask(task: TaskData): string {
-  const label = (s: string) => s.padEnd(15, " ");
+export function renderTask(task: TaskData, options: RenderOptions = {}): string {
+  const color = options.color === true;
+  const label = (s: string) => style(s.padEnd(15, " "), ANSI.dim, color);
   const lines: string[] = [];
 
-  lines.push(`#${task.id} ${task.title}`);
+  const titleLine = `#${task.id} ${task.title}`;
+  lines.push(style(titleLine, ANSI.bold, color));
   lines.push("");
 
   lines.push(`${label("uuid:")}${task.uuid}`);
-  lines.push(`${label("column:")}${task.column}`);
+  lines.push(`${label("column:")}${style(task.column, ANSI.cyan, color)}`);
 
   if (task.deps.length === 0) {
     lines.push(`${label("deps:")}(none)`);

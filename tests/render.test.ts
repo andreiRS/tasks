@@ -128,3 +128,92 @@ test("tasks show <id> without --json prints the renderTask output", async () => 
   expect(stdout).toContain("column:        backlog");
   expect(stdout).toContain("created_at:");
 });
+
+// ─── Color handling tests ───────────────────────────────────────────────────
+
+const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+
+const sampleTask: TaskData = {
+  id: 42,
+  uuid: "7f3a9c2e-1234-4567-89ab-cdef01234567",
+  title: "add OAuth flow",
+  column: "backlog",
+  created_at: "2026-05-27T10:14:00.000Z",
+  updated_at: "2026-05-27T10:14:00.000Z",
+  body: "Some body text.",
+  deps: [],
+  agent_ready: false,
+  human_in_loop: false,
+};
+
+test("renderTask with color: false contains no ANSI escapes", () => {
+  const out = renderTask(sampleTask, { color: false });
+  expect(out).not.toMatch(/\x1b\[/);
+});
+
+test("renderTask with color: true contains ANSI escapes and strips to the plain rendering", () => {
+  const colored = renderTask(sampleTask, { color: true });
+  const plain = renderTask(sampleTask, { color: false });
+  expect(colored).toMatch(/\x1b\[/);
+  expect(stripAnsi(colored)).toBe(plain);
+});
+
+test("renderTask defaults to no color when options omitted", () => {
+  const out = renderTask(sampleTask);
+  expect(out).not.toMatch(/\x1b\[/);
+});
+
+test("tasks show <id> --no-color produces no ANSI escapes even with FORCE_COLOR=1", async () => {
+  const seed = await runTasks(["new", "hello world"]);
+  expect(seed.exitCode).toBe(0);
+
+  const proc = Bun.spawn(["bun", "run", cliPath, "show", "1", "--no-color"], {
+    env: { ...process.env, TASKS_HOME: tasksHome, FORCE_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: cwdDir,
+  });
+  const [exitCode, stdout] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+  ]);
+  expect(exitCode).toBe(0);
+  expect(stdout).not.toMatch(/\x1b\[/);
+});
+
+test("tasks show <id> with FORCE_COLOR=1 emits ANSI escapes", async () => {
+  const seed = await runTasks(["new", "hello world"]);
+  expect(seed.exitCode).toBe(0);
+
+  const proc = Bun.spawn(["bun", "run", cliPath, "show", "1"], {
+    env: { ...process.env, TASKS_HOME: tasksHome, FORCE_COLOR: "1", NO_COLOR: "" },
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: cwdDir,
+  });
+  const [exitCode, stdout] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+  ]);
+  expect(exitCode).toBe(0);
+  expect(stdout).toMatch(/\x1b\[/);
+  expect(stripAnsi(stdout)).toContain("#1 hello world");
+});
+
+test("tasks show <id> with NO_COLOR=1 beats FORCE_COLOR=1", async () => {
+  const seed = await runTasks(["new", "hello world"]);
+  expect(seed.exitCode).toBe(0);
+
+  const proc = Bun.spawn(["bun", "run", cliPath, "show", "1"], {
+    env: { ...process.env, TASKS_HOME: tasksHome, FORCE_COLOR: "1", NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: cwdDir,
+  });
+  const [exitCode, stdout] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+  ]);
+  expect(exitCode).toBe(0);
+  expect(stdout).not.toMatch(/\x1b\[/);
+});
