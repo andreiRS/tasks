@@ -46,7 +46,7 @@ function findProjectRoot(startDir: string): string {
  * Example: /Users/foo/bar → -Users-foo-bar
  * Example: /Users/a-b/c → -Users-a--b-c
  */
-function encodePath(absPath: string): string {
+export function encodePath(absPath: string): string {
   return absPath.replace(/-/g, "--").replace(/\//g, "-");
 }
 
