@@ -58,3 +58,17 @@ test("path resolver walks up to the nearest .git ancestor for store key", async 
   const { existsSync } = await import("node:fs");
   expect(existsSync(expectedStoreDir)).toBe(true);
 });
+
+test("encodePath distinguishes '/Users/a-b/c' from '/Users/a/b/c'", () => {
+  const a = encodePath("/Users/a-b/c");
+  const b = encodePath("/Users/a/b/c");
+  expect(a).not.toBe(b);
+});
+
+test("encodePath('/Users/a-b/c') produces '-Users-a--b-c'", () => {
+  expect(encodePath("/Users/a-b/c")).toBe("-Users-a--b-c");
+});
+
+test("encodePath('/Users/a/b/c') produces '-Users-a-b-c'", () => {
+  expect(encodePath("/Users/a/b/c")).toBe("-Users-a-b-c");
+});
