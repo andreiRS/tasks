@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderBoard } from "../src/render.ts";
