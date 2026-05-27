@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findFlockOrFail, TasksError } from "./store.ts";
+import { renderTask } from "./render.ts";
 
 /**
  * Write a JSON error envelope to stderr.
@@ -109,8 +110,7 @@ if (command === "new") {
   if (jsonFlag) {
     process.stdout.write(JSON.stringify(task) + "\n");
   } else {
-    // Human renderer is M2; for now just show a basic summary
-    process.stdout.write(`#${task.id} ${task.title} [${task.column}]\n`);
+    process.stdout.write(renderTask(task));
   }
 }
 
