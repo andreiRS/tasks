@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { storeDir, ensureStore, createTask, resolveStoreDir, findTask } from "./store.ts";
+import { storeDir, ensureStore, createTask, resolveStoreDir, findTask, findFlockOrFail, TasksError } from "./store.ts";
 
 /**
  * Write a JSON error envelope to stderr.
@@ -37,11 +37,27 @@ const args = process.argv.slice(2);
 const [command, ...rest] = args;
 
 if (command === "new") {
-  const title = rest[0] ?? "";
+  const jsonFlag = rest.includes("--json");
+  const title = rest.find((a) => a !== "--json") ?? "";
   const titleError = validateTitle(title);
   if (titleError !== null) {
     process.stderr.write(`tasks: INVALID_TITLE: ${titleError}\n`);
     process.exit(1);
+  }
+
+  // Check flock availability BEFORE any store/git work.
+  try {
+    findFlockOrFail();
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        process.stderr.write(`${err.message}\n`);
+      }
+      process.exit(1);
+    }
+    throw err;
   }
 
   const dir = storeDir(process.cwd());

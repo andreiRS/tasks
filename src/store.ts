@@ -3,6 +3,22 @@ import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { stringify as yamlStringify, parse as yamlParse } from "yaml";
 
+/**
+ * A structured error thrown by the tasks CLI store layer.
+ * `code` is a stable machine-readable enum value (e.g. "FLOCK_MISSING").
+ * `details` carries any extra context the caller wants to surface.
+ */
+export class TasksError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly details: Record<string, unknown> = {}
+  ) {
+    super(message);
+    this.name = "TasksError";
+  }
+}
+
 const COLUMNS = ["backlog", "ready", "doing", "blocked", "review", "done"];
 
 /**
@@ -113,9 +129,6 @@ export async function ensureStore(dir: string): Promise<boolean> {
 /**
  * Locate the system `flock(1)` binary. Searches PATH via `Bun.which`, then a
  * couple of well-known locations. Returns null if not found.
- *
- * Note: hardened "flock missing → actionable error" is a future cycle; callers
- * may throw a generic error if this returns null.
  */
 function findFlock(): string | null {
   const found = Bun.which("flock");
@@ -124,6 +137,29 @@ function findFlock(): string | null {
     if (existsSync(candidate)) return candidate;
   }
   return null;
+}
+
+/**
+ * Return the path to flock(1) by searching only via PATH (Bun.which), or
+ * throw a TasksError with code FLOCK_MISSING if it cannot be found.
+ *
+ * Call this as the FIRST check in any mutating command so the failure is
+ * actionable before any git or filesystem work is attempted.
+ *
+ * NOTE: Unlike findFlock (which also checks hardcoded locations), this
+ * function intentionally respects PATH only — hardcoded fallbacks would
+ * silently succeed even when a user hasn't set up their PATH correctly.
+ */
+export function findFlockOrFail(): string {
+  const flockBin = Bun.which("flock");
+  if (!flockBin) {
+    throw new TasksError(
+      "FLOCK_MISSING",
+      "tasks: 'flock' not found on PATH. Install it with: brew install flock",
+      { hint: "brew install flock" }
+    );
+  }
+  return flockBin;
 }
 
 /**
@@ -142,10 +178,7 @@ async function withLock<T>(dir: string, fn: () => Promise<T>): Promise<T> {
     closeSync(openSync(lockPath, "w"));
   }
 
-  const flockBin = findFlock();
-  if (!flockBin) {
-    throw new Error("flock not found on PATH");
-  }
+  const flockBin = findFlockOrFail();
 
   const lockProc = Bun.spawn([flockBin, "-x", lockPath, "cat"], {
     stdin: "pipe",
