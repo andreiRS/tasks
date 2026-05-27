@@ -10,7 +10,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parse as parseYaml } from "yaml";
 
 let tasksHome: string;
 let cwdDir: string;
@@ -88,7 +87,6 @@ function injectDeps(storeDir: string, col: string, id: number, depUuids: string[
   const filePath = join(colDir, files[0]);
   const raw = readFileSync(filePath, "utf-8");
   const parts = raw.split(/^---\s*$/m);
-  const fm = parseYaml(parts[1]) as Record<string, unknown>;
   // Build the deps YAML inline list
   const depsYaml = depUuids.length === 0 ? "[]" : `[${depUuids.map((u) => `"${u}"`).join(", ")}]`;
   // Replace the deps: line (or insert if absent)
