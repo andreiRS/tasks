@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { storeDir, ensureStore } from "./store.ts";
+import { storeDir, ensureStore, createTask } from "./store.ts";
 
 const args = process.argv.slice(2);
 const [command, ...rest] = args;
@@ -13,6 +13,8 @@ if (command === "new") {
 
   const dir = storeDir(process.cwd());
   await ensureStore(dir);
+  const id = await createTask(dir, title);
+  process.stdout.write(`task: new #${id} — ${title}\n`);
 }
 
 process.exit(0);

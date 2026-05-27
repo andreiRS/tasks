@@ -1,5 +1,7 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { randomUUID } from "node:crypto";
+import { stringify as yamlStringify } from "yaml";
 
 const COLUMNS = ["backlog", "ready", "doing", "blocked", "review", "done"];
 
@@ -44,6 +46,17 @@ export function storeDir(cwd: string): string {
 }
 
 /**
+ * Convert a title to a URL/filename slug.
+ * Lowercase, replace runs of non-alphanumeric chars with `-`, trim dashes.
+ */
+function slugify(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+/**
  * Run a git command in the given directory. Returns exit code.
  */
 async function git(args: string[], cwd: string): Promise<number> {
@@ -82,4 +95,52 @@ export async function ensureStore(dir: string): Promise<boolean> {
 
   process.stderr.write(`tasks: initialized store at ${dir}\n`);
   return true;
+}
+
+/**
+ * Create a new task in the store.
+ * Allocates an ID from meta.yaml, writes the task file to backlog/,
+ * updates meta.yaml, and commits both files atomically.
+ *
+ * Returns the short id of the new task.
+ */
+export async function createTask(dir: string, title: string): Promise<number> {
+  // Read or initialize meta.yaml
+  const metaPath = join(dir, "meta.yaml");
+  let nextId = 1;
+  if (existsSync(metaPath)) {
+    const raw = readFileSync(metaPath, "utf-8");
+    const match = raw.match(/next_id:\s*(\d+)/);
+    if (match) {
+      nextId = parseInt(match[1], 10);
+    }
+  }
+
+  const id = nextId;
+  const uuid = randomUUID();
+  const now = new Date().toISOString();
+  const slug = slugify(title);
+  const filename = `${id}-${slug}.md`;
+  const taskPath = join(dir, "backlog", filename);
+
+  const frontmatter = yamlStringify({
+    id,
+    uuid,
+    title,
+    created_at: now,
+    updated_at: now,
+  });
+
+  const fileContent = `---\n${frontmatter}---\n`;
+  writeFileSync(taskPath, fileContent, "utf-8");
+
+  // Update meta.yaml
+  writeFileSync(metaPath, `next_id: ${id + 1}\n`, "utf-8");
+
+  // Stage both files and commit
+  const taskRelPath = `backlog/${filename}`;
+  await git(["add", taskRelPath, "meta.yaml"], dir);
+  await git(["commit", "-m", `task: new #${id} — ${title}`], dir);
+
+  return id;
 }
