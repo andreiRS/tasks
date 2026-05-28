@@ -1,21 +1,25 @@
 # tasks
 
-A git-backed, file-per-task CLI for tracking work across six columns. Each task is a markdown file with YAML frontmatter, kept in a per-project git repository under `$TASKS_HOME`. Every mutation is an atomic commit, so the history is the audit log.
+A git-backed, file-per-task CLI for tracking work across six columns, designed so humans and Claude Code agents drive the same surface. Each task is a markdown file with YAML frontmatter, kept in a per-project git repository under `$TASKS_HOME`. Every mutation is an atomic commit, so the history is the audit log.
 
-> Status: work in progress. M1 through M7a are implemented (capture/inspect, human renderer, list, filters/board/cutoff, move, edit/delete, DAG validator + rm cascade). Link/unlink and later milestones are not built yet.
+> **Status:** M1–M7b and most of M8 are implemented. The store, validator (schema + DAG rules), all read commands (`show`, `list`, `board`, `next`), and all write commands except `undo` and explicit `init` are live. See [MILESTONES.md](./MILESTONES.md) for the full delivery plan and per-milestone status.
 
 ## Why
 
 - Tasks live in plain files you can grep, diff, and back up.
 - The store is a git repo, so `git log` shows exactly what changed and when.
-- Designed to be driven by humans and agents from the same CLI surface.
+- The same CLI is driven by humans (short IDs, human renderer) and agents (UUIDs, `--json`, stable error codes).
+- Open transitions, strict DAG: the validator protects the graph, not the workflow.
 
 ## How it works
 
-- The store directory is keyed off your project root, defined as the nearest ancestor of the current directory that contains a `.git/` (falling back to `cwd`).
-- Stores live under `$TASKS_HOME/projects/<encoded-path>/` (path encoding doubles literal `-` and turns `/` into `-`, so it is reversible).
-- Each task is a file in one of six column directories: `backlog`, `ready`, `doing`, `blocked`, `review`, `done`.
-- An `flock`-based lock serializes mutating commands so concurrent invocations cannot corrupt the store.
+- The **Store** directory is keyed off the **Project root**, defined as the nearest ancestor of `pwd` that contains a `.git/` (falling back to `pwd`).
+- Stores live under `$TASKS_HOME/projects/<encoded-path>/`. Path encoding doubles literal `-` and then turns `/` into `-`, so collisions like `/a-b/c` vs `/a/b/c` cannot happen and the encoding is reversible.
+- Each task is a markdown file in one of six **Column** directories: `backlog`, `ready`, `doing`, `blocked`, `review`, `done`. Moving columns is a `git mv`.
+- A task has two identifiers: a per-project **Short ID** (monotonic, never reused, allocated atomically via `meta.yaml`) and a stable **UUID** (used for all `deps` references).
+- An **flock**-based lock serializes mutating commands. The dirty-tree guard runs *after* the lock so concurrent invocations serialize cleanly.
+
+See [CONTEXT.md](./CONTEXT.md) for the full glossary and [docs/adr/](./docs/adr/) for the recorded design decisions.
 
 ## Requirements
 
@@ -29,13 +33,13 @@ From the repo root:
 
 ```sh
 bun install
-bun run tasks --help   # not implemented yet; see commands below
+bun run src/cli.ts --help
 ```
 
-While developing, invoke commands via the bun script:
+While developing, invoke commands directly via the entry point:
 
 ```sh
-bun run tasks <command> [...args]
+bun run src/cli.ts <command> [...args]
 ```
 
 A compiled single-file binary is wired up in `package.json`:
@@ -45,98 +49,129 @@ bun run build           # produces dist/tasks
 ./dist/tasks <command>
 ```
 
-You can set `$TASKS_HOME` to choose where stores live (default is the platform-appropriate location; see `src/store.ts`).
+Set `$TASKS_HOME` to choose where stores live (defaults to `~/.local/share/tasks`). Tests rely on this override for hermetic tempdirs.
+
+## Frontmatter shape
+
+```yaml
+id: 42
+uuid: 7f3a9c2e-...
+title: add OAuth flow
+deps: ["uuid-a", "uuid-b"]
+attendance: attended      # or "unattended" (agent pickup gate)
+effort: medium            # low | medium | high
+created_at: 2026-05-27T10:14:00Z
+updated_at: 2026-05-27T10:14:00Z
+```
+
+`id`, `uuid`, `title`, `created_at`, `updated_at` are required. `deps` defaults to `[]`, `attendance` to `attended`, `effort` to `medium`. Body is free-form markdown; a `## Acceptance Criteria` section is parsed out into `acceptance_criteria` on `--json` reads.
 
 ## Commands
 
-All commands accept `--json` (machine-readable envelope on success and failure). All read commands accept `--no-color`; output is plain when stdout is not a TTY. `NO_COLOR` (any value) and `FORCE_COLOR=1` are honored, with `--no-color` and `NO_COLOR` winning over `FORCE_COLOR`.
+All read commands accept `--json` (machine-readable envelope on success and failure) and `--no-color`. Color is on when stdout is a TTY; `NO_COLOR` (any value) forces off, `FORCE_COLOR=1` forces on, and `--no-color` / `NO_COLOR` win over `FORCE_COLOR`. `--json` must be explicit, non-TTY stdout does NOT auto-switch.
 
-### `tasks new "<title>"`
+### `tasks new "<title>" [flags]`
 
-Create a new task in `backlog`. Title must be non-empty, single line, and at most 200 characters.
+Create a task in `backlog/`. Title must be non-empty, single line, ≤200 characters.
+
+Flags:
+- `--unattended` — set `attendance: unattended` at creation.
+- `--effort <low|medium|high>` — override the default `medium`.
+- `--deps <id|uuid>` — repeatable. Validates against the DAG.
+- `--edit` — open `$EDITOR` after creation; the create + body edit land in a single commit.
+- `--body -` — read the body from stdin.
 
 ```sh
-bun run tasks new "Wire up OAuth flow"
+bun run src/cli.ts new "Wire up OAuth flow"
+bun run src/cli.ts new "Ship release notes" --unattended --effort low --deps 3 --deps 5
+echo "## Acceptance Criteria\n- OAuth works" | bun run src/cli.ts new "Wire up OAuth" --body -
 ```
 
 ### `tasks show <id|uuid> [--json] [--no-color]`
 
-Print a task. Human output renders the title, metadata block, and body. `--json` returns the normalized task object.
+Print a task. Human output renders the header (id, uuid, column, attendance, effort, timestamps), forward deps as `#id title`, reverse deps (what this task blocks), and the body. `--json` returns the full structured task including parsed `acceptance_criteria`.
 
-```sh
-bun run tasks show 1
-bun run tasks show 1 --json
-```
+### `tasks list [flags]`
 
-### `tasks list [--column <name>]... [--all] [--since <Nd>] [--json] [--no-color]`
+Flat list across all six columns. By default hides `done/` tasks whose `updated_at` is older than 7 days.
 
-List tasks. By default, lists every column but hides `done` tasks whose `updated_at` is older than 7 days.
-
-- `--column <name>` filters by column. Repeatable, OR-combined. Unknown column emits `INVALID_COLUMN`.
-- `--all` shows everything regardless of age.
-- `--since 30d` overrides the cutoff window.
-
-```sh
-bun run tasks list
-bun run tasks list --column doing --column review
-bun run tasks list --since 30d
-bun run tasks list --json
-```
+- `--column <name>` — repeatable, OR-combined. Unknown column emits `INVALID_COLUMN`.
+- `--attendance <attended|unattended>` — single value.
+- `--effort <low|medium|high>` — single value.
+- `--all` — show everything regardless of age.
+- `--since <Nd>` — override the cutoff window.
+- `--json`, `--no-color`.
 
 ### `tasks board [--all] [--since <Nd>] [--json] [--no-color]`
 
-Render all six columns as stacked sections. Same cutoff rules as `list`. `--json` returns `{ backlog: TaskData[], ready: ..., doing: ..., blocked: ..., review: ..., done: ... }`.
-
-```sh
-bun run tasks board
-bun run tasks board --json
-```
+Six-column kanban as static print. Same cutoff rules as `list`. Attendance and effort render as compact dim glyphs per row to keep columns tight. `--json` returns `{ backlog: [...], ready: [...], ... }`.
 
 ### `tasks mv <id|uuid> <column>`
 
-Move a task between columns. Same-column is a no-op (exit 0, no commit). Bumps `updated_at`. Unknown column emits `INVALID_COLUMN`.
+Move a task. Same-column is a no-op (exit 0, no commit). Bumps `updated_at`. Unknown column emits `INVALID_COLUMN`. Open transitions: the CLI does not enforce dep-completeness on moves (see ADR 0005).
+
+### `tasks edit <id|uuid> [--abort]`
+
+Open the task file in `$EDITOR`, validate on save, commit. Title change recomputes the slug and performs the content update plus `git mv` in one atomic commit. Invalid saves are rejected with the relevant validator code (`INVALID_TITLE`, `MISSING_FIELD`, `UNKNOWN_UUID`, `CYCLE_DETECTED`, ...) and the bad file is preserved so you can re-run `tasks edit` to fix it.
 
 ```sh
-bun run tasks mv 1 ready
-bun run tasks mv 1 doing
+EDITOR=vim bun run src/cli.ts edit 1
+bun run src/cli.ts edit --abort   # discard pending edits, reset working tree to HEAD
 ```
 
-### `tasks edit <id|uuid>`
+This command is exempt from the dirty-tree guard so it can serve as the recovery path.
 
-Open the task file in `$EDITOR`, validate on save, and commit. Title validation runs again; invalid saves are rejected with `INVALID_TITLE` and the bad file is preserved on disk so you can fix it. A title change recomputes the slug, performs the content update plus `git mv`, and commits both in one atomic step.
+### `tasks set <id|uuid> [flags]`
 
-```sh
-EDITOR=vim bun run tasks edit 1
-bun run tasks edit --abort   # discard pending edits, reset working tree to HEAD
-```
+Scalar setter for the three single-field changes that don't need an editor round-trip. At least one flag is required; multiple flags land in one commit.
 
-This command is exempt from the dirty-tree guard.
+- `--title <title>` — recomputes the slug and renames the file in the same commit (same semantics as `edit`'s title-change path).
+- `--attendance <attended|unattended>`
+- `--effort <low|medium|high>`
+
+Deps are mutated via `link`/`unlink`, not `set`.
+
+### `tasks link <id|uuid> --depends-on <id|uuid> [--depends-on ...]`
+
+Add dep edges. `--depends-on` is repeatable; a single invocation produces a single commit. Validates self-links, cycles, and unknown UUIDs before writing.
+
+### `tasks unlink <id|uuid> --depends-on <id|uuid> [--depends-on ...]`
+
+Remove dep edges. Same multi-arg / single-commit semantics.
 
 ### `tasks rm <id|uuid> [--force]`
 
-Delete a task and commit. If any task depends on this one, the command refuses with `DEP_EXISTS`. `--force` deletes and strips dangling references from every dependent in the same atomic commit, printing `affected: #<id> <title>` lines to stderr.
+Delete a task. If any task depends on this one, the command refuses with `DEP_EXISTS`. `--force` deletes and strips dangling references from every dependent in the same atomic commit, printing `affected: #<id> <title>` lines to stderr so the cascade is never invisible.
 
-```sh
-bun run tasks rm 3
-bun run tasks rm 3 --force
-```
+### `tasks next [flags]`
+
+Print the oldest task in `ready/` whose deps are all in `done/`.
+
+- `--attendance <attended|unattended>` — single value.
+- `--unattended` — shorthand for `--attendance unattended`. The recommended gate for agent pickup.
+- `--json`.
+
+Exits non-zero with `NO_READY_TASK` if no candidate exists.
 
 ## Safety rails
 
-- **flock**: every mutating command (`new`, `mv`, `edit`, `rm`) takes an exclusive lock on the store. Concurrent invocations serialize cleanly.
-- **Dirty-tree guard**: mutations refuse with `STORE_DIRTY` if the store working tree has uncommitted changes (`edit` is intentionally exempt; use `tasks edit --abort` to reset).
+- **flock**: every mutating command takes an exclusive lock on the store. Concurrent invocations serialize. Missing `flock` on `$PATH` emits `FLOCK_MISSING` with the install hint.
+- **Dirty-tree guard**: mutations refuse with `STORE_DIRTY` if the store working tree has uncommitted changes. `edit` is intentionally exempt; use `tasks edit --abort` to reset.
+- **Schema validator**: required fields and title constraints are enforced on every write.
 - **DAG validator**: every mutation that could change the graph rebuilds it and rejects with `CYCLE_DETECTED` or `UNKNOWN_UUID` before committing.
-- **Atomicity**: every successful mutation is a single git commit.
+- **Atomicity**: every successful mutation is a single git commit. The lock guards ID allocation, validation, file writes, and the commit as one critical section.
 
 ## Error envelope
 
 With `--json`, errors come back as:
 
 ```json
-{ "ok": false, "error": { "code": "NOT_FOUND", "message": "..." } }
+{ "error": { "code": "CYCLE_DETECTED", "message": "...", "details": {} } }
 ```
 
-Codes used so far: `NOT_FOUND`, `INVALID_TITLE`, `INVALID_COLUMN`, `UNKNOWN_COLUMN`, `INVALID_SINCE`, `STORE_DIRTY`, `FLOCK_MISSING`, `NOT_INITIALIZED`, `MISSING_FIELD`, `NO_EDITOR`, `EDITOR_FAILED`, `UNKNOWN_UUID`, `CYCLE_DETECTED`, `DEP_EXISTS`.
+Without `--json`, errors are plain text on stderr. Either way the exit code is non-zero.
+
+Codes used so far: `NOT_FOUND`, `INVALID_TITLE`, `INVALID_COLUMN`, `INVALID_ATTENDANCE`, `INVALID_EFFORT`, `INVALID_SINCE`, `STORE_DIRTY`, `FLOCK_MISSING`, `NOT_INITIALIZED`, `MISSING_FIELD`, `NO_EDITOR`, `EDITOR_FAILED`, `UNKNOWN_UUID`, `CYCLE_DETECTED`, `DEP_EXISTS`, `SELF_LINK`, `NO_READY_TASK`. `NOTHING_TO_UNDO` lands with M9.
 
 ## Tests
 
@@ -145,18 +180,22 @@ bun test
 bunx tsc --noEmit
 ```
 
-Tests spawn the CLI through `Bun.spawn` against a tempdir `TASKS_HOME` and assert on stdout, stderr, exit codes, and on-disk state. There is no git mocking and no assertion on internal modules from the CLI tests.
+Tests spawn the CLI via `Bun.spawn` against a tempdir `TASKS_HOME` and assert on stdout, stderr, exit codes, and on-disk state. No git mocking. No assertions on internal modules. See [MILESTONES.md](./MILESTONES.md) for the TDD working method (one commit per green state, refactors only from green).
 
 ## Layout
 
 ```
 src/
-  cli.ts       command dispatch + argument parsing
-  store.ts     path resolver, encoding, store ops, validator, flock wrapper
-  render.ts    human renderers for show / list / board, color helpers
-tests/         CLI-level integration tests
-PRD.md         product spec
-MILESTONES.md  delivery plan
+  cli.ts         command dispatch + argument parsing
+  store.ts       path resolver, encoding, store ops, validator, flock wrapper
+  render.ts      human renderers for show / list / board / next, color helpers
+  acceptance.ts  hand-rolled fence-aware Acceptance Criteria parser
+tests/           CLI-level integration tests
+docs/adr/        Architecture Decision Records
+PRD.md           product spec
+CONTEXT.md       glossary (canonical terms)
+MILESTONES.md    delivery plan + status
+CLAUDE.md        agent-facing pointer file
 ```
 
 ## License

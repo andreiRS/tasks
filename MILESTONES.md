@@ -2,6 +2,37 @@
 
 Implementation broken into vertical slices. Each milestone delivers user-visible behavior end-to-end (storage + CLI + tests), not a horizontal layer. Numbers in brackets reference user stories in [PRD.md](./PRD.md).
 
+## Status overview
+
+```mermaid
+flowchart LR
+    M1["M1 Capture &amp; inspect (JSON)<br/>15 / 15 stories"]:::done
+    M2["M2 Human renderer + color<br/>1 / 1"]:::done
+    M3["M3 Flat list<br/>2 / 2"]:::done
+    M4["M4 Filters, board, cutoff<br/>4 / 4"]:::done
+    M5["M5 Move<br/>2 / 2"]:::done
+    M6["M6 Edit &amp; delete<br/>3 / 3"]:::done
+    M7a["M7a DAG + rm cascade<br/>4 / 4"]:::done
+    M7b["M7b Link, unlink, blockers<br/>4 / 4"]:::done
+    M8["M8 Agent collaboration<br/>5 / 5"]:::done
+    M9["M9 Undo<br/>0 / 1"]:::todo
+    M10["M10 Ship<br/>0 / 0 (polish)"]:::todo
+
+    M1 --> M2 --> M3 --> M4
+    M1 --> M5
+    M1 --> M6 --> M7a --> M7b
+    M7a --> M8 --> M9 --> M10
+    M1 -.-> M9
+
+    classDef done fill:#1f7a3a,stroke:#0d4d22,color:#fff;
+    classDef wip fill:#b07d00,stroke:#5e4300,color:#fff;
+    classDef todo fill:#3a3a3a,stroke:#1a1a1a,color:#fff;
+```
+
+Legend: green = shipped, grey = not started. Numbers are `completed / total` user stories per milestone, taken from the **Stories covered** line of each milestone section (a story split across milestones is counted in each). M10 introduces no new stories — it's a consistency + release pass.
+
+Story totals: **35 / 36** unique PRD stories landed. Story 7 (`tasks undo`) is the only one still open, and it lands with M9.
+
 ## Working method: TDD with atomic commits at every green
 
 Two non-negotiable constraints govern how every milestone is built:
