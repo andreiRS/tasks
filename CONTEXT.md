@@ -27,8 +27,12 @@ The per-Store YAML file that holds Store-wide state, currently just `next_id` fo
 _Avoid_: config, manifest, store.yaml.
 
 **Column**:
-One of the six fixed status buckets: `backlog`, `ready`, `doing`, `blocked`, `review`, `done`. A Task's Column is encoded by the directory the file lives in. Moving Columns is a Transition (a `git mv`).
+One of the six fixed status buckets: `backlog`, `ready`, `doing`, `blocked`, `review`, `done`. A Task's Column is encoded by the directory the file lives in. Moving Columns is a Transition (a `git mv`). The Archive directory is **not** a Column.
 _Avoid_: status, state, lane, stage.
+
+**Archive**:
+A sibling directory `archive/` inside the Store that holds Tasks the caller has explicitly retired from the live workflow. Not a Column: Transitions never target it, the only way in is `tasks archive`, and `list`/`board`/`next` skip it by default. Archived Tasks still count as Complete for blocking purposes, so dep resolution scans `archive/` alongside `done/`. See `docs/adr/0010-archive-as-sibling-directory.md`.
+_Avoid_: archived column, archive status, trash, deleted.
 
 **Transition**:
 Any move of a Task from one Column to another. All Column-to-Column moves are legal; the Validator does not enforce a workflow (per `docs/adr/0005-open-transitions.md`). Callers are free to move a Task `done → doing`, `blocked → ready`, and so on.
