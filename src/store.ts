@@ -259,6 +259,9 @@ export async function isStoreDirty(dir: string): Promise<boolean> {
  */
 export async function createTask(dir: string, title: string): Promise<number> {
   return withLock(dir, async () => {
+    // Reject if any existing task file carries an invalid enum value.
+    validateEnums(dir);
+
     // Read or initialize meta.yaml
     const metaPath = join(dir, "meta.yaml");
     let nextId = 1;
@@ -282,6 +285,8 @@ export async function createTask(dir: string, title: string): Promise<number> {
       uuid,
       title,
       deps: [],
+      attendance: DEFAULT_ATTENDANCE,
+      effort: DEFAULT_EFFORT,
       created_at: now,
       updated_at: now,
     });
@@ -314,6 +319,92 @@ export interface TaskData {
   deps: string[];
   agent_ready: boolean;
   human_in_loop: boolean;
+  attendance: "attended" | "unattended";
+  effort: "low" | "medium" | "high";
+}
+
+/**
+ * Allowed enum values for the M8 frontmatter fields.
+ */
+export const ATTENDANCE_VALUES = ["attended", "unattended"] as const;
+export const EFFORT_VALUES = ["low", "medium", "high"] as const;
+export const DEFAULT_ATTENDANCE: "attended" = "attended";
+export const DEFAULT_EFFORT: "medium" = "medium";
+
+/**
+ * Resolve a raw frontmatter `attendance` value to a valid enum member or null
+ * if the value is present-but-invalid. A missing value resolves to the default.
+ */
+function resolveAttendance(value: unknown): "attended" | "unattended" | null {
+  if (value === undefined || value === null) return DEFAULT_ATTENDANCE;
+  if (typeof value !== "string") return null;
+  if ((ATTENDANCE_VALUES as readonly string[]).includes(value)) {
+    return value as "attended" | "unattended";
+  }
+  return null;
+}
+
+function resolveEffort(value: unknown): "low" | "medium" | "high" | null {
+  if (value === undefined || value === null) return DEFAULT_EFFORT;
+  if (typeof value !== "string") return null;
+  if ((EFFORT_VALUES as readonly string[]).includes(value)) {
+    return value as "low" | "medium" | "high";
+  }
+  return null;
+}
+
+/**
+ * Validate the attendance/effort enum values across every task file in the
+ * store. Throws TasksError with code INVALID_ATTENDANCE or INVALID_EFFORT on
+ * the first offending file. Missing fields are accepted (treated as defaults).
+ *
+ * Call from any mutating command (after the dirty-tree guard, before the
+ * mutation proper) so an out-of-band corruption is surfaced before any new
+ * commit lands.
+ */
+export function validateEnums(dir: string): void {
+  if (!existsSync(dir)) return;
+  for (const col of COLUMNS) {
+    const colDir = join(dir, col);
+    if (!existsSync(colDir)) continue;
+    let files: string[];
+    try {
+      files = readdirSync(colDir).filter((f) => f.endsWith(".md"));
+    } catch {
+      continue;
+    }
+    for (const filename of files) {
+      const filePath = join(colDir, filename);
+      let raw: string;
+      try {
+        raw = readFileSync(filePath, "utf-8");
+      } catch {
+        continue;
+      }
+      const parts = raw.split(/^---\s*$/m);
+      if (parts.length < 3) continue;
+      let fm: Record<string, unknown>;
+      try {
+        fm = yamlParse(parts[1]) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      if (fm.attendance !== undefined && resolveAttendance(fm.attendance) === null) {
+        throw new TasksError(
+          "INVALID_ATTENDANCE",
+          `task ${fm.uuid ?? filename} has invalid attendance: ${String(fm.attendance)}. Allowed: ${ATTENDANCE_VALUES.join(", ")}`,
+          { uuid: fm.uuid, value: fm.attendance, allowed: [...ATTENDANCE_VALUES] },
+        );
+      }
+      if (fm.effort !== undefined && resolveEffort(fm.effort) === null) {
+        throw new TasksError(
+          "INVALID_EFFORT",
+          `task ${fm.uuid ?? filename} has invalid effort: ${String(fm.effort)}. Allowed: ${EFFORT_VALUES.join(", ")}`,
+          { uuid: fm.uuid, value: fm.effort, allowed: [...EFFORT_VALUES] },
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -387,6 +478,8 @@ export function findAllTasks(dir: string): TaskData[] {
         deps: Array.isArray(fm.deps) ? (fm.deps as string[]) : [],
         agent_ready: typeof fm.agent_ready === "boolean" ? fm.agent_ready : false,
         human_in_loop: typeof fm.human_in_loop === "boolean" ? fm.human_in_loop : false,
+        attendance: resolveAttendance(fm.attendance) ?? DEFAULT_ATTENDANCE,
+        effort: resolveEffort(fm.effort) ?? DEFAULT_EFFORT,
       });
     }
   }
@@ -429,6 +522,9 @@ export async function moveTask(dir: string, idOrUuid: string, targetColumn: stri
         {}
       );
     }
+
+    // Reject if any existing task file carries an invalid enum value.
+    validateEnums(dir);
 
     // Find the task
     const task = findTask(dir, idOrUuid);
@@ -530,6 +626,9 @@ export async function removeTask(
         {}
       );
     }
+
+    // Reject if any existing task file carries an invalid enum value.
+    validateEnums(dir);
 
     // Find the task
     const task = findTask(dir, idOrUuid);
@@ -771,6 +870,11 @@ export async function editTask(
   runEditor: EditorRunner,
 ): Promise<{ kind: "noop" } | { kind: "committed"; titleChanged: boolean }> {
   return withLock(dir, async () => {
+    // Reject if any existing task file (other than the editing one) carries
+    // an invalid enum value. The edit path itself may set new values — those
+    // are validated post-save below.
+    validateEnums(dir);
+
     const loc = findTaskFilename(dir, idOrUuid);
     if (!loc) {
       throw new TasksError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
@@ -838,6 +942,23 @@ export async function editTask(
     // If updated_at bump resulted in identical content (rare; e.g. user already
     // set updated_at to now), still proceed since other content differs.
     writeFileSync(filePath, bumped, "utf-8");
+
+    // Validate enum fields on the just-saved file (post-mutation state).
+    // Leaves the bad file on disk so `tasks edit --abort` or re-edit recovers.
+    if (fm.attendance !== undefined && resolveAttendance(fm.attendance) === null) {
+      throw new TasksError(
+        "INVALID_ATTENDANCE",
+        `invalid attendance: ${String(fm.attendance)}. Allowed: ${ATTENDANCE_VALUES.join(", ")}`,
+        { value: fm.attendance, allowed: [...ATTENDANCE_VALUES] },
+      );
+    }
+    if (fm.effort !== undefined && resolveEffort(fm.effort) === null) {
+      throw new TasksError(
+        "INVALID_EFFORT",
+        `invalid effort: ${String(fm.effort)}. Allowed: ${EFFORT_VALUES.join(", ")}`,
+        { value: fm.effort, allowed: [...EFFORT_VALUES] },
+      );
+    }
 
     // Validate the graph across all on-disk tasks (post-mutation state). If
     // validation fails, leave the bad file on disk (mirrors INVALID_TITLE) so
@@ -908,6 +1029,9 @@ export async function linkTask(
         {}
       );
     }
+
+    // Reject if any existing task file carries an invalid enum value.
+    validateEnums(dir);
 
     // Resolve subject
     const subject = findTask(dir, subjectRef);
@@ -1026,6 +1150,9 @@ export async function unlinkTask(
         {}
       );
     }
+
+    // Reject if any existing task file carries an invalid enum value.
+    validateEnums(dir);
 
     // Resolve subject
     const subject = findTask(dir, subjectRef);
@@ -1165,6 +1292,8 @@ export function findTask(dir: string, idOrUuid: string): TaskData | null {
           deps: Array.isArray(fm.deps) ? (fm.deps as string[]) : [],
           agent_ready: typeof fm.agent_ready === "boolean" ? fm.agent_ready : false,
           human_in_loop: typeof fm.human_in_loop === "boolean" ? fm.human_in_loop : false,
+          attendance: resolveAttendance(fm.attendance) ?? DEFAULT_ATTENDANCE,
+          effort: resolveEffort(fm.effort) ?? DEFAULT_EFFORT,
         };
       }
     }

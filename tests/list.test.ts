@@ -49,6 +49,8 @@ const sampleTasks: TaskData[] = [
     deps: [],
     agent_ready: false,
     human_in_loop: false,
+    attendance: "attended",
+    effort: "medium",
   },
   {
     id: 2,
@@ -61,6 +63,8 @@ const sampleTasks: TaskData[] = [
     deps: [],
     agent_ready: false,
     human_in_loop: false,
+    attendance: "attended",
+    effort: "medium",
   },
 ];
 

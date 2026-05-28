@@ -92,6 +92,8 @@ function makeTask(id: number, column: string, title: string): TaskData {
     deps: [],
     agent_ready: false,
     human_in_loop: false,
+    attendance: "attended",
+    effort: "medium",
   };
 }
 

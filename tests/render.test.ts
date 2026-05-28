@@ -49,6 +49,8 @@ test("renderTask returns the pinned human-readable layout", () => {
     deps: [],
     agent_ready: false,
     human_in_loop: false,
+    attendance: "attended",
+    effort: "medium",
   };
 
   const out = renderTask(task);
@@ -88,6 +90,8 @@ test("renderTask lists deps as UUIDs when present and reflects flags", () => {
     ],
     agent_ready: true,
     human_in_loop: true,
+    attendance: "attended",
+    effort: "medium",
   };
 
   const out = renderTask(task);
@@ -144,6 +148,8 @@ const sampleTask: TaskData = {
   deps: [],
   agent_ready: false,
   human_in_loop: false,
+  attendance: "attended",
+  effort: "medium",
 };
 
 test("renderTask with color: false contains no ANSI escapes", () => {
