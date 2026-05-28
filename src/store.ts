@@ -999,6 +999,120 @@ export async function linkTask(
 }
 
 /**
+ * Remove dependency edges from `subjectRef` for each UUID in `targetRefs`.
+ *
+ * - Resolves both the subject and each target by short id or UUID.
+ * - Self-unlink is rejected with SELF_LINK (mirrors link's behavior).
+ * - Targets that resolve to a real task but are not currently in deps are
+ *   silently ignored (idempotent).
+ * - Unknown target ref (resolves to no task) throws UNKNOWN_UUID.
+ * - If no edges would change (all targets absent), exits 0 with no commit.
+ * - Otherwise: writes updated frontmatter, bumps updated_at, commits once.
+ * - Runs validateGraph() after the mutation for consistency.
+ *
+ * Acquires flock. Honors dirty-tree guard.
+ */
+export async function unlinkTask(
+  dir: string,
+  subjectRef: string,
+  targetRefs: string[],
+): Promise<void> {
+  return withLock(dir, async () => {
+    // Dirty-tree guard inside the lock (definitive check)
+    if (await isStoreDirty(dir)) {
+      throw new TasksError(
+        "STORE_DIRTY",
+        "store working tree is dirty; commit or discard pending changes before running mutating commands",
+        {}
+      );
+    }
+
+    // Resolve subject
+    const subject = findTask(dir, subjectRef);
+    if (!subject) {
+      throw new TasksError("NOT_FOUND", `task not found: ${subjectRef}`, { id: subjectRef });
+    }
+
+    // Resolve each target ref to a UUID
+    const allTasks = findAllTasks(dir);
+    const knownByUuid = new Map(allTasks.map((t) => [t.uuid, t]));
+    const knownById = new Map(allTasks.map((t) => [t.id, t]));
+
+    const resolvedTargetUuids: string[] = [];
+    for (const ref of targetRefs) {
+      let targetTask: TaskData | undefined;
+      if (/^\d+$/.test(ref)) {
+        targetTask = knownById.get(parseInt(ref, 10));
+      } else {
+        targetTask = knownByUuid.get(ref);
+      }
+
+      if (!targetTask) {
+        throw new TasksError(
+          "UNKNOWN_UUID",
+          `target not found: ${ref}`,
+          { uuid: ref }
+        );
+      }
+
+      // Self-unlink check (mirrors link's SELF_LINK behavior)
+      if (targetTask.uuid === subject.uuid) {
+        throw new TasksError(
+          "SELF_LINK",
+          `task cannot unlink itself: ${subject.uuid}`,
+          { uuid: subject.uuid }
+        );
+      }
+
+      resolvedTargetUuids.push(targetTask.uuid);
+    }
+
+    // Compute new deps by removing the resolved targets
+    const removeSet = new Set(resolvedTargetUuids);
+    const updatedDeps = subject.deps.filter((u) => !removeSet.has(u));
+
+    // No-op: deps unchanged (no target was actually in deps)
+    if (updatedDeps.length === subject.deps.length) {
+      return;
+    }
+
+    // Validate the graph post-mutation for consistency
+    const mutatedTasks = allTasks.map((t) =>
+      t.uuid === subject.uuid ? { ...t, deps: updatedDeps } : t
+    );
+    validateGraph(mutatedTasks);
+
+    // Find the subject file on disk
+    const loc = findTaskFilename(dir, subject.uuid);
+    if (!loc) {
+      throw new TasksError("NOT_FOUND", `task not found: ${subjectRef}`, { id: subjectRef });
+    }
+    const filePath = join(dir, loc.column, loc.filename);
+    const raw = readFileSync(filePath, "utf-8");
+    const parts = raw.split(/^---\s*$/m);
+    if (parts.length < 3) {
+      throw new TasksError("INVALID_TITLE", "task file is missing YAML frontmatter", {});
+    }
+
+    // Rewrite deps line in frontmatter and bump updated_at
+    const depsYaml =
+      updatedDeps.length === 0
+        ? "[]"
+        : `[${updatedDeps.map((u) => `"${u}"`).join(", ")}]`;
+    const now = new Date().toISOString();
+    let newFm = parts[1].replace(/^deps:.*$/m, `deps: ${depsYaml}`);
+    newFm = newFm.replace(/^(updated_at:\s*)(.+)$/m, `$1${now}`);
+    const newContent = `---${newFm}---${parts.slice(2).join("---")}`;
+    writeFileSync(filePath, newContent, "utf-8");
+
+    const relPath = `${loc.column}/${loc.filename}`;
+    await git(["add", relPath], dir);
+    const removedUuids = subject.deps.filter((u) => removeSet.has(u));
+    await git(["commit", "-m", `task: unlink #${subject.id} remove ${removedUuids.map((u) => u.slice(0, 8)).join(", ")}`], dir);
+  });
+}
+
+/**
  * Find a task by short id (positive integer string) or UUID.
  * Walks all six column directories.
  * Returns TaskData (with normalized defaults) or null if not found.

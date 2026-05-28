@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
-import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, editTask, abortPendingEdits, linkTask, TasksError, COLUMNS } from "./store.ts";
+import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, editTask, abortPendingEdits, linkTask, unlinkTask, TasksError, COLUMNS } from "./store.ts";
 import { renderTask, renderList, renderBoard } from "./render.ts";
 
 /**
@@ -578,6 +578,84 @@ if (command === "new") {
 
   try {
     await linkTask(dir, subjectRef, targetRefs);
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        writePlainError(`${err.code}: ${err.message}`);
+      }
+      process.exit(1);
+    }
+    throw err;
+  }
+} else if (command === "unlink") {
+  const jsonFlag = rest.includes("--json");
+
+  // Parse subject (first positional arg before any flag)
+  const posArgs = rest.filter((a) => !a.startsWith("--"));
+  const subjectRef = posArgs[0] ?? "";
+
+  // Collect all --depends-on <value> arguments (repeatable)
+  const targetRefs: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "--depends-on" && i + 1 < rest.length) {
+      targetRefs.push(rest[i + 1]);
+      i++; // skip value token
+    }
+  }
+
+  if (!subjectRef) {
+    const msg = "usage: tasks unlink <id|uuid> --depends-on <id|uuid>...";
+    if (jsonFlag) {
+      writeJsonError("MISSING_FIELD", msg, {});
+    } else {
+      writePlainError(`MISSING_FIELD: ${msg}`);
+    }
+    process.exit(1);
+  }
+
+  if (targetRefs.length === 0) {
+    const msg = "usage: tasks unlink <id|uuid> --depends-on <id|uuid>...";
+    if (jsonFlag) {
+      writeJsonError("MISSING_FIELD", msg, {});
+    } else {
+      writePlainError(`MISSING_FIELD: ${msg}`);
+    }
+    process.exit(1);
+  }
+
+  // Check flock availability
+  try {
+    findFlockOrFail();
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        process.stderr.write(`${err.message}\n`);
+      }
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  const dir = storeDir(process.cwd());
+  await ensureStore(dir);
+
+  // Early dirty-tree check
+  if (await isStoreDirty(dir)) {
+    const msg = "store working tree is dirty; commit or discard pending changes before running mutating commands";
+    if (jsonFlag) {
+      writeJsonError("STORE_DIRTY", msg, {});
+    } else {
+      process.stderr.write(`tasks: STORE_DIRTY: ${msg}\n`);
+    }
+    process.exit(1);
+  }
+
+  try {
+    await unlinkTask(dir, subjectRef, targetRefs);
   } catch (err) {
     if (err instanceof TasksError) {
       if (jsonFlag) {
