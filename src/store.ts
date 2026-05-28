@@ -880,6 +880,125 @@ export async function editTask(
 }
 
 /**
+ * Add dependency edges from `subjectRef` to each UUID in `targetRefs`.
+ *
+ * - Resolves both the subject and each target by short id or UUID.
+ * - Self-link is rejected with SELF_LINK before graph validation.
+ * - Deduplicates: targets already present in deps are silently skipped.
+ * - Runs validateGraph() after tentatively applying the new edges so
+ *   UNKNOWN_UUID and CYCLE_DETECTED errors surface naturally.
+ * - If no new edges would be added (all already present), still exits 0
+ *   but makes no commit (no-op, matching mv same-column behavior).
+ * - Otherwise: writes the updated frontmatter and commits once.
+ * - Bumps updated_at on the subject task.
+ *
+ * Acquires flock. Honors dirty-tree guard.
+ */
+export async function linkTask(
+  dir: string,
+  subjectRef: string,
+  targetRefs: string[],
+): Promise<void> {
+  return withLock(dir, async () => {
+    // Dirty-tree guard inside the lock (definitive check)
+    if (await isStoreDirty(dir)) {
+      throw new TasksError(
+        "STORE_DIRTY",
+        "store working tree is dirty; commit or discard pending changes before running mutating commands",
+        {}
+      );
+    }
+
+    // Resolve subject
+    const subject = findTask(dir, subjectRef);
+    if (!subject) {
+      throw new TasksError("NOT_FOUND", `task not found: ${subjectRef}`, { id: subjectRef });
+    }
+
+    // Resolve each target ref to a UUID (may be short id or UUID already)
+    const allTasks = findAllTasks(dir);
+    const knownByUuid = new Map(allTasks.map((t) => [t.uuid, t]));
+    const knownById = new Map(allTasks.map((t) => [t.id, t]));
+
+    const resolvedTargetUuids: string[] = [];
+    for (const ref of targetRefs) {
+      let targetTask: TaskData | undefined;
+      if (/^\d+$/.test(ref)) {
+        targetTask = knownById.get(parseInt(ref, 10));
+      } else {
+        targetTask = knownByUuid.get(ref);
+      }
+
+      if (!targetTask) {
+        // If not resolved by short id or direct UUID lookup, throw UNKNOWN_UUID.
+        // (validateGraph would catch it too, but we want a clear error here.)
+        throw new TasksError(
+          "UNKNOWN_UUID",
+          `target not found: ${ref}`,
+          { uuid: ref }
+        );
+      }
+
+      // Self-link check
+      if (targetTask.uuid === subject.uuid) {
+        throw new TasksError(
+          "SELF_LINK",
+          `task cannot depend on itself: ${subject.uuid}`,
+          { uuid: subject.uuid }
+        );
+      }
+
+      resolvedTargetUuids.push(targetTask.uuid);
+    }
+
+    // Determine new edges (deduplicate against existing deps)
+    const existingDeps = new Set(subject.deps);
+    const newEdges = resolvedTargetUuids.filter((u) => !existingDeps.has(u));
+
+    // No-op: all targets already in deps
+    if (newEdges.length === 0) {
+      return;
+    }
+
+    // Tentatively apply edges and validate the graph
+    const updatedDeps = [...subject.deps, ...newEdges];
+
+    // Build a temporary tasks snapshot with the updated deps for validation
+    const mutatedTasks = allTasks.map((t) =>
+      t.uuid === subject.uuid ? { ...t, deps: updatedDeps } : t
+    );
+    validateGraph(mutatedTasks);
+
+    // Find the subject file on disk
+    const loc = findTaskFilename(dir, subject.uuid);
+    if (!loc) {
+      throw new TasksError("NOT_FOUND", `task not found: ${subjectRef}`, { id: subjectRef });
+    }
+    const filePath = join(dir, loc.column, loc.filename);
+    const raw = readFileSync(filePath, "utf-8");
+    const parts = raw.split(/^---\s*$/m);
+    if (parts.length < 3) {
+      throw new TasksError("INVALID_TITLE", "task file is missing YAML frontmatter", {});
+    }
+
+    // Rewrite deps line in frontmatter and bump updated_at
+    const depsYaml =
+      updatedDeps.length === 0
+        ? "[]"
+        : `[${updatedDeps.map((u) => `"${u}"`).join(", ")}]`;
+    const now = new Date().toISOString();
+    let newFm = parts[1].replace(/^deps:.*$/m, `deps: ${depsYaml}`);
+    newFm = newFm.replace(/^(updated_at:\s*)(.+)$/m, `$1${now}`);
+    const newContent = `---${newFm}---${parts.slice(2).join("---")}`;
+    writeFileSync(filePath, newContent, "utf-8");
+
+    const relPath = `${loc.column}/${loc.filename}`;
+    await git(["add", relPath], dir);
+    await git(["commit", "-m", `task: link #${subject.id} depends-on ${newEdges.map((u) => `${u.slice(0, 8)}`).join(", ")}`], dir);
+  });
+}
+
+/**
  * Find a task by short id (positive integer string) or UUID.
  * Walks all six column directories.
  * Returns TaskData (with normalized defaults) or null if not found.
