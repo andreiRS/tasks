@@ -183,7 +183,7 @@ test("tasks export --json: reverse_deps indexes live tasks that depend on each t
 
 // ─── Slice 5: archive stub for archived dep ──────────────────────────────────
 
-test.skip("tasks export --json: archived task referenced as a live dep appears as a stub, full archive omitted", async () => {
+test("tasks export --json: archived task referenced as a live dep appears as a stub, full archive omitted", async () => {
   // 1 = the eventual blocker (move to done then archive).
   await runTasks(["new", "blocker old"]);
   // 2 = the dependent (depends on 1).

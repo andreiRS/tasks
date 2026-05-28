@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import {
   COLUMNS,
   findAllTasks,
+  findArchivedTasks,
   resolveStoreDir,
   type TaskData,
 } from "../store.ts";
@@ -40,6 +41,24 @@ interface ExportedLiveTask {
   attendance: "attended" | "unattended";
   effort: "low" | "medium" | "high";
   acceptance_criteria: string;
+}
+
+interface ArchiveStub {
+  id: number;
+  uuid: string;
+  title: string;
+  column: "archive";
+  complete: true;
+}
+
+function toArchiveStub(task: TaskData): ArchiveStub {
+  return {
+    id: task.id,
+    uuid: task.uuid,
+    title: task.title,
+    column: "archive",
+    complete: true,
+  };
 }
 
 function toLiveExport(task: TaskData): ExportedLiveTask {
@@ -97,7 +116,28 @@ export async function run(rest: string[]): Promise<void> {
     ordered.push(...grouped[col]);
   }
 
-  const tasksOut: ExportedLiveTask[] = ordered.map(toLiveExport);
+  const tasksOut: Array<ExportedLiveTask | ArchiveStub> = ordered.map(toLiveExport);
+
+  // Archive Stubs: for any Archived Task that is referenced as a Dep by a
+  // live Task, emit a minimal record after the live tasks so the Dep graph
+  // is never dangling. The full Archive is excluded by default.
+  const archivedTasks = findArchivedTasks(dir);
+  const archivedByUuid = new Map(archivedTasks.map((t) => [t.uuid, t]));
+  const referencedArchivedUuids = new Set<string>();
+  for (const t of ordered) {
+    for (const depUuid of t.deps) {
+      if (archivedByUuid.has(depUuid)) {
+        referencedArchivedUuids.add(depUuid);
+      }
+    }
+  }
+  if (referencedArchivedUuids.size > 0) {
+    const stubs = archivedTasks
+      .filter((t) => referencedArchivedUuids.has(t.uuid))
+      .sort((a, b) => a.id - b.id)
+      .map(toArchiveStub);
+    tasksOut.push(...stubs);
+  }
 
   // Reverse-dep index: for every live task with deps [B, C], record this
   // task's uuid under reverse_deps[B] and reverse_deps[C]. Computed from
