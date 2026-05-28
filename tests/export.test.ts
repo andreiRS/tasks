@@ -154,7 +154,7 @@ test("tasks export --json: tasks grouped by canonical column order, sorted by cr
 
 // ─── Slice 4: reverse_deps populated for live→live deps ──────────────────────
 
-test.skip("tasks export --json: reverse_deps indexes live tasks that depend on each task", async () => {
+test("tasks export --json: reverse_deps indexes live tasks that depend on each task", async () => {
   await runTasks(["new", "blocker"]);
   await runTasks(["new", "dependent A"]);
   await runTasks(["new", "dependent B"]);

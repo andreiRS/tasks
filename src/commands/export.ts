@@ -99,6 +99,20 @@ export async function run(rest: string[]): Promise<void> {
 
   const tasksOut: ExportedLiveTask[] = ordered.map(toLiveExport);
 
+  // Reverse-dep index: for every live task with deps [B, C], record this
+  // task's uuid under reverse_deps[B] and reverse_deps[C]. Computed from
+  // live forward `deps` only.
+  const reverseDeps: Record<string, string[]> = {};
+  for (const t of liveTasks) {
+    for (const depUuid of t.deps) {
+      if (!reverseDeps[depUuid]) reverseDeps[depUuid] = [];
+      reverseDeps[depUuid].push(t.uuid);
+    }
+  }
+  for (const uuid of Object.keys(reverseDeps)) {
+    reverseDeps[uuid].sort();
+  }
+
   const headSha = await readHeadSha(dir);
 
   const envelope = {
@@ -106,7 +120,7 @@ export async function run(rest: string[]): Promise<void> {
     schema_version: SCHEMA_VERSION,
     head_sha: headSha,
     tasks: tasksOut,
-    reverse_deps: {},
+    reverse_deps: reverseDeps,
   };
 
   process.stdout.write(JSON.stringify(envelope) + "\n");
