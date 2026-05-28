@@ -19,7 +19,7 @@ A git-backed, file-per-task CLI for tracking work across six columns, designed s
 - A task has two identifiers: a per-project **Short ID** (monotonic, never reused, allocated atomically via `meta.yaml`) and a stable **UUID** (used for all `deps` references).
 - An **flock**-based lock serializes mutating commands. The dirty-tree guard runs *after* the lock so concurrent invocations serialize cleanly.
 
-See [CONTEXT.md](./CONTEXT.md) for the full glossary and [docs/adr/](./docs/adr/) for the recorded design decisions.
+See [CONTEXT.md](./CONTEXT.md) for the full glossary.
 
 ## Requirements
 
@@ -111,7 +111,7 @@ Six-column kanban as static print. Same cutoff rules as `list`. Attendance and e
 
 ### `tasks mv <id|uuid> <column>`
 
-Move a task. Same-column is a no-op (exit 0, no commit). Bumps `updated_at`. Unknown column emits `INVALID_COLUMN`. Open transitions: the CLI does not enforce dep-completeness on moves (see ADR 0005).
+Move a task. Same-column is a no-op (exit 0, no commit). Bumps `updated_at`. Unknown column emits `INVALID_COLUMN`. Moves do not require deps to be done; the CLI lets you transition freely between any columns.
 
 ### `tasks edit <id|uuid> [--abort]`
 
@@ -168,7 +168,7 @@ Exits non-zero with `NO_READY_TASK` if no candidate exists.
 
 Whole-Store JSON dump intended for agents. One call returns the full live store with everything an agent needs to plan: frontmatter, body, parsed `acceptance_criteria`, forward and reverse deps, the HEAD commit SHA, and a `schema_version`. Tasks are grouped by Column in fixed order (`backlog → ready → doing → blocked → review → done`) and sorted by `created_at` ascending within each group, so successive exports diff cleanly.
 
-Archived Tasks are excluded by default, but any Archived Task referenced as a Dep by a live Task is included as an **Archive Stub** (`{ id, uuid, title, column: "archive", complete: true }`) so the dep graph is never dangling. `--include-archived` emits the full archive (with bodies) as a seventh group. `--columns ready,doing` narrows the live set; stubs still appear for archived deps of the in-scope tasks. `--json` is required (a future human format may land later). See [ADR-0011](./docs/adr/0011-export-shape-and-defaults.md).
+Archived Tasks are excluded by default, but any Archived Task referenced as a Dep by a live Task is included as an **Archive Stub** (`{ id, uuid, title, column: "archive", complete: true }`) so the dep graph is never dangling. `--include-archived` emits the full archive (with bodies) as a seventh group. `--columns ready,doing` narrows the live set; stubs still appear for archived deps of the in-scope tasks. `--json` is required (a future human format may land later).
 
 ### `tasks summary --json [--recent <N>] [--stale <Nd>]`
 

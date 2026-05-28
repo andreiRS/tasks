@@ -12,35 +12,49 @@ versions; breaking changes will be called out explicitly here.
 
 ## [0.1.0] - 2026-05-28
 
-First versioned release. The Store, validator, every read command
-(`show`, `list`, `board`, `next`, `export`, `summary`), every mutating
-command (`init`, `new`, `mv`, `edit`, `set`, `link`, `unlink`, `rm`,
-`undo`, `archive`), and `doctor` are in place.
+First versioned release. `tasks` is a single-binary CLI for managing
+work as markdown files in a per-project, git-backed store. Every
+mutation is a commit, so history and rollback come for free.
 
 ### Added
 
-- `tasks export --json`: whole-Store JSON dump for agents. Returns
-  every live Task (frontmatter + body + parsed acceptance criteria), a
-  `reverse_deps` index, the Store HEAD commit SHA, and a
-  `schema_version`. Archived Tasks are excluded by default; any
-  Archived Task referenced as a Dep by a live Task is included as an
-  Archive Stub (`{ id, uuid, title, column: "archive", complete: true }`)
-  so the Dep graph is never dangling. Tasks are grouped by Column in
-  fixed order then sorted by `created_at` ascending for deterministic
-  diffs across invocations. `--include-archived` opts the full Archive
-  in; `--columns a,b,c` restricts the live set. See
-  [ADR-0011](./docs/adr/0011-export-shape-and-defaults.md).
-- `tasks summary --json`: compact Store digest with per-Column counts,
-  the last 10 Tasks by `updated_at` (`recent`), and live-Column Tasks
-  in `doing`/`blocked`/`review` untouched for 14+ days (`stale`).
-  Separate envelope from `export`: no `tasks` array. Thresholds
-  overridable via `--recent N` and `--stale <duration>`.
-- `tasks --version` / `tasks -V` / `tasks version`: prints the CLI
-  version sourced from `package.json`.
-- `Export`, `Archive Stub`, and `Summary` glossary entries in
-  `CONTEXT.md`.
-- `docs/adr/0011-export-shape-and-defaults.md` records the contract
-  decisions behind `export` and `summary`.
+- `tasks init` creates a per-project store under
+  `$TASKS_HOME/projects/<encoded-cwd>/` (default `$HOME/.tasks`).
+  Idempotent.
+- `tasks new <title>` adds a task to `backlog` with `--effort`,
+  `--deps`, `--unattended`, `--body -` (stdin), and `--edit` to open
+  it in `$EDITOR`.
+- `tasks show <id|uuid>` prints a task with its incoming and outgoing
+  dependency edges.
+- `tasks list` filters by `--column`, `--attendance`, `--effort`,
+  `--since <Nd>`, `--all`. Done tasks older than 7 days are hidden by
+  default; `--archived` lists archived tasks instead.
+- `tasks board` renders a kanban view grouped by column.
+- `tasks next` prints the oldest ready task whose dependencies are
+  all done, with `--attendance` / `--unattended` filters for agents.
+- `tasks mv`, `set`, `link`, `unlink`, `rm` (with `--force` to strip
+  dependents) for in-place edits. Each lands as a single commit.
+- `tasks edit <id|uuid>` opens the task in `$EDITOR`; `tasks edit
+  --abort` discards a pending edit.
+- `tasks archive [<id|uuid>] [--before <Nd>]` retires done tasks; the
+  no-arg form archives everything eligible.
+- `tasks undo` reverts the most recent commit in the store.
+- `tasks doctor` reports the store path, git status, and stash count.
+- `tasks export --json` dumps the whole store for agents: every live
+  task (front matter, body, parsed acceptance criteria), a
+  `reverse_deps` index, the current commit SHA, and a `schema_version`.
+  Archived tasks are excluded by default but any archived task
+  referenced as a dependency is included as a small stub so the
+  dependency graph is never dangling. `--include-archived` emits the
+  full archive; `--columns a,b,c` narrows the live set.
+- `tasks summary --json` prints a compact digest: per-column counts,
+  the 10 most recently updated tasks, and tasks in `doing`/`blocked`/
+  `review` untouched for 14+ days. Override with `--recent N` and
+  `--stale <duration>`.
+- `tasks --version` / `-V` / `version` prints the CLI version.
+- Safety: mutating commands take a `flock`, refuse to run against a
+  dirty tree (`STORE_DIRTY`), and run a validator that rejects cycles
+  and unknown dependencies (`CYCLE_DETECTED`, `UNKNOWN_UUID`).
 
 [Unreleased]: https://github.com/andreiRS/tasks/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/andreiRS/tasks/releases/tag/v0.1.0
