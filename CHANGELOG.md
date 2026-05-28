@@ -42,5 +42,5 @@ command (`init`, `new`, `mv`, `edit`, `set`, `link`, `unlink`, `rm`,
 - `docs/adr/0011-export-shape-and-defaults.md` records the contract
   decisions behind `export` and `summary`.
 
-[Unreleased]: https://github.com/USER/REPO/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/USER/REPO/releases/tag/v0.1.0
+[Unreleased]: https://github.com/andreiRS/tasks/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/andreiRS/tasks/releases/tag/v0.1.0

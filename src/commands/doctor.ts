@@ -19,7 +19,7 @@ import { COLUMNS, resolveStoreDir } from "../store.ts";
  *   - Clean tree → prints `store already clean`. No stash is created.
  *
  * Always exits 0. Does NOT take the flock. Does NOT validate schema.
- * Never deletes files. See ADR-0009 and docs/doctor-clean.md.
+ * Never deletes files. See ADR-0009.
  *
  * `--json` is opt-in (never auto-switches on non-TTY stdout), mirroring
  * other read commands. JSON shapes:
