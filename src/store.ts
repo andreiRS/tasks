@@ -841,6 +841,95 @@ export async function removeTask(
   });
 }
 
+export interface ArchiveOptions {
+  /** Single-task form: archive only this task (must be in `done/`). */
+  idOrUuid?: string;
+  /** Bulk form: archive done/ tasks whose `updated_at` is strictly before this instant. */
+  before?: Date;
+}
+
+/**
+ * Archive tasks: `git mv` them from `done/` into the `archive/` sibling
+ * directory. Three forms:
+ *   - no opts: archive every task currently in `done/`.
+ *   - `before`: archive `done/` tasks older than the cutoff (by `updated_at`).
+ *   - `idOrUuid`: archive that single task; rejects with INVALID_COLUMN if the
+ *     task isn't in `done/`.
+ * On a non-empty target set, produces exactly one commit covering every move
+ * and the `updated_at` bumps. Empty target set is a no-op (no commit).
+ *
+ * Acquires flock. Honors dirty-tree guard.
+ */
+export async function archiveTasks(
+  dir: string,
+  opts: ArchiveOptions = {},
+): Promise<{ archived: TaskData[] }> {
+  return withLock(dir, async () => {
+    if (await isStoreDirty(dir)) {
+      throw new TasksError(
+        "STORE_DIRTY",
+        "store working tree is dirty; commit or discard pending changes before running mutating commands",
+        {},
+      );
+    }
+    validateEnums(dir);
+
+    let targets: TaskData[];
+    if (opts.idOrUuid) {
+      const t = findTask(dir, opts.idOrUuid);
+      if (!t) {
+        throw new TasksError("NOT_FOUND", `task not found: ${opts.idOrUuid}`, { id: opts.idOrUuid });
+      }
+      if (t.column !== "done") {
+        throw new TasksError(
+          "INVALID_COLUMN",
+          `task #${t.id} is in '${t.column}', not 'done'; only done/ tasks can be archived`,
+          { column: t.column, id: t.id, uuid: t.uuid },
+        );
+      }
+      targets = [t];
+    } else {
+      const doneTasks = findAllTasks(dir).filter((t) => t.column === "done");
+      if (opts.before) {
+        const cutoff = opts.before.getTime();
+        targets = doneTasks.filter((t) => new Date(t.updated_at).getTime() < cutoff);
+      } else {
+        targets = doneTasks;
+      }
+    }
+
+    if (targets.length === 0) {
+      return { archived: [] };
+    }
+
+    mkdirSync(join(dir, ARCHIVE_DIR), { recursive: true });
+
+    const now = new Date().toISOString();
+    for (const task of targets) {
+      const loc = findTaskFilename(dir, String(task.uuid));
+      if (!loc) continue;
+      const oldRelPath = `${loc.column}/${loc.filename}`;
+      const newRelPath = `${ARCHIVE_DIR}/${loc.filename}`;
+      const oldFilePath = join(dir, loc.column, loc.filename);
+      const raw = readFileSync(oldFilePath, "utf-8");
+      const updated = raw.replace(/^(updated_at:\s*)(.+)$/m, `$1${now}`);
+      writeFileSync(oldFilePath, updated, "utf-8");
+      await git(["add", oldRelPath], dir);
+      const mvExit = await git(["mv", oldRelPath, newRelPath], dir);
+      if (mvExit !== 0) {
+        throw new TasksError("GIT_ERROR", `git mv failed`, {});
+      }
+    }
+
+    const subject = targets.length === 1
+      ? `task: archive #${targets[0].id}: ${targets[0].title}`
+      : `task: archive ${targets.length} tasks from done`;
+    await git(["commit", "-m", subject], dir);
+
+    return { archived: targets };
+  });
+}
+
 /**
  * Locate the on-disk filename for a task by short id or UUID.
  * Returns null if not found.

@@ -29,6 +29,8 @@ Commands:
   init [--json]           Create the per-project store (idempotent).
   undo [--json]           Revert the most recent store commit.
   doctor                  Report store path, git status, and stash count.
+  archive [<id|uuid>] [--before <Nd>] [--json]
+                          Retire done/ tasks into archive/ (no-arg = all).
   help                    Show this message.
 
 Global flags:
