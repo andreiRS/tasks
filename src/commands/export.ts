@@ -8,6 +8,7 @@ import {
 } from "../store.ts";
 import { writeJsonError, writePlainError } from "../cli/errors.ts";
 import { parseAcceptanceCriteria } from "../acceptance.ts";
+import { getFlagValue } from "../cli/args.ts";
 
 const SCHEMA_VERSION = "1";
 
@@ -92,10 +93,33 @@ function toArchiveFullExport(task: TaskData): ExportedArchivedTask {
 export async function run(rest: string[]): Promise<void> {
   const jsonFlag = rest.includes("--json");
   const includeArchived = rest.includes("--include-archived");
+  const columnsArg = getFlagValue(rest, "--columns");
 
   if (!jsonFlag) {
     writePlainError("MISSING_FIELD: tasks export requires --json");
     process.exit(1);
+  }
+
+  // Parse and validate --columns (comma-separated list of live columns).
+  // Unknown column values exit early with UNKNOWN_COLUMN so callers fail
+  // fast instead of receiving a silently-empty payload.
+  let columnFilter: string[] | null = null;
+  if (columnsArg !== undefined) {
+    const requested = columnsArg
+      .split(",")
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0);
+    for (const col of requested) {
+      if (!COLUMNS.includes(col)) {
+        writeJsonError(
+          "UNKNOWN_COLUMN",
+          `unknown column: ${col}. Valid columns: ${COLUMNS.join(", ")}`,
+          { column: col, valid: COLUMNS },
+        );
+        process.exit(1);
+      }
+    }
+    columnFilter = requested;
   }
 
   const dir = resolveStoreDir(process.cwd());
@@ -110,12 +134,19 @@ export async function run(rest: string[]): Promise<void> {
 
   const liveTasks = findAllTasks(dir);
 
+  // Apply --columns filter before grouping. The archive-stub logic below
+  // intentionally still scans the filtered live set, so stubs only appear
+  // for deps of in-scope tasks.
+  const filteredLive = columnFilter === null
+    ? liveTasks
+    : liveTasks.filter((t) => columnFilter!.includes(t.column));
+
   // Group by Column in the fixed COLUMNS order, then sort each bucket by
   // `created_at` ascending. The export contract guarantees this ordering so
   // diffs across invocations are stable.
   const grouped: Record<string, TaskData[]> = {};
   for (const col of COLUMNS) grouped[col] = [];
-  for (const t of liveTasks) {
+  for (const t of filteredLive) {
     if (grouped[t.column]) grouped[t.column].push(t);
   }
   const ordered: TaskData[] = [];

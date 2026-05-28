@@ -254,7 +254,7 @@ test("tasks export --json --include-archived: full archive group with bodies, no
 
 // ─── Slice 7: --columns filters live tasks, stubs still emitted ──────────────
 
-test.skip("tasks export --json --columns ready,doing restricts live tasks; archive stubs still appear for in-scope deps", async () => {
+test("tasks export --json --columns ready,doing restricts live tasks; archive stubs still appear for in-scope deps", async () => {
   // backlog task that should be filtered out.
   await runTasks(["new", "background work"]);
   // live dependent in ready, depends on an archived task.
