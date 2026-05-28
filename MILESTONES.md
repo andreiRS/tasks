@@ -169,12 +169,15 @@ Each milestone introduces one observable capability and the smallest infrastruct
 **Stories covered:** 8, 9, 21, 26, 34.
 
 **Behavior:**
-- `agent_ready`, `human_in_loop` frontmatter fields + flags on `tasks new`.
-- `tasks new --edit`, `--body -` from stdin, `--deps` on creation.
-- `tasks next [--json]`: `ready/` + all deps in `done/` + `agent_ready: true`. Oldest `created_at` wins. Adds `NO_READY_TASK` to the enum.
-- Acceptance Criteria parser (hand-rolled, fence-aware, case-insensitive). On `--json` reads (`show`, `list`, `board`, `next`): `acceptance_criteria` (string, `""` if absent) exposed alongside `body`.
+- `attendance` (`attended` | `unattended`, default `attended`) and `effort` (`low` | `medium` | `high`, default `medium`) frontmatter fields. `tasks new` writes both defaults explicitly to disk. Read commands resolve missing values to the default and always surface the resolved value in `--json`. Validator rejects invalid enum values with `INVALID_ATTENDANCE` / `INVALID_EFFORT`.
+- `tasks new --unattended --effort <low|medium|high>`, plus `--edit`, `--body -` from stdin, `--deps` on creation.
+- `tasks set <id|uuid> [--title <title>] [--attendance ...] [--effort ...]`: scalar setter; at least one flag required; multiple flags combined into a single commit. `--title` triggers slug recompute + `git mv` in the same commit (same semantics as `edit`'s title-change path).
+- `tasks list` gains `--attendance <attended|unattended>` and `--effort <low|medium|high>` filters (single value each).
+- `tasks next [--attendance <attended|unattended>] [--unattended] [--json]`: `ready/` + all deps in `done/`. No attendance filter by default; `--unattended` (shorthand for `--attendance unattended`) restricts to safe-for-agent work, replacing the old `agent_ready: true` gate. Oldest `created_at` wins. Adds `NO_READY_TASK` to the enum.
+- Acceptance Criteria parser (hand-rolled, fence-aware, case-insensitive). On `--json` reads (`show`, `list`, `board`, `next`): `acceptance_criteria` (string, `""` if absent) exposed alongside `body`. `attendance` and `effort` are always emitted with their resolved value.
+- Human renderings: `show` includes `attendance` and `effort` in the header block (full words). `list` and `board` append compact dim-styled glyphs per row (e.g. `○` attended / `●` unattended, `·L` / `·M` / `·H` for effort) so the kanban layout stays tight.
 
-**Depends on:** M7a (deps-complete check), M6 (edit + body plumbing), M2 (renderer for `next`).
+**Depends on:** M7a (deps-complete check), M6 (edit + body plumbing; `tasks set --title` shares slug/rename logic with `edit`), M2 (renderer for `next` and the new fields).
 
 ---
 

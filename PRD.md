@@ -29,8 +29,8 @@ Humans get a fast `tasks new`, `tasks list`, and `tasks board`. Agents get struc
 5. As a developer, I want to unlink a dependency so that I can correct mistakes.
 6. As a developer, I want to move a task between columns with a single command so that transitions are cheap.
 7. As a developer, I want to undo the most recent change so that I can recover from mistakes without learning git internals.
-8. As a developer, I want to mark a task as `agent_ready` so that an agent may later pick it up unattended.
-9. As a developer, I want to mark a task as `human_in_loop` so that it is excluded from agent pickup.
+8. As a developer, I want to mark a task as `attended` or `unattended` so that I can control whether an agent may pick it up.
+9. As a developer or agent, I want to record a task's `effort` (low / medium / high) so that the right cognitive or model resource can be chosen when the task is picked up.
 
 ### Human reading and navigation
 
@@ -146,14 +146,17 @@ id: 42
 uuid: 7f3a9c2e-...
 title: add OAuth flow
 deps: ["uuid-a", "uuid-b"]
-agent_ready: false
-human_in_loop: false
+attendance: attended
+effort: medium
 created_at: 2026-05-27T10:14:00Z
 updated_at: 2026-05-27T10:14:00Z
 ```
 
 - **Required** fields (validator rejects writes missing them): `id`, `uuid`, `title`, `created_at`, `updated_at`.
-- **Optional** fields with defaults: `deps` (default `[]`), `agent_ready` (default `false`), `human_in_loop` (default `false`).
+- **Optional** fields with defaults: `deps` (default `[]`), `attendance` (default `attended`), `effort` (default `medium`).
+- `attendance` accepts exactly `attended` or `unattended`. `effort` accepts exactly `low`, `medium`, or `high`. Any other value is rejected with `INVALID_ATTENDANCE` or `INVALID_EFFORT`.
+- `tasks new` writes the default values for `attendance` and `effort` explicitly to disk so frontmatter is self-describing when opened in `$EDITOR`. When an older file omits either field, read commands resolve to the default and always surface the resolved value in `--json` (consumers never see `null` or an absent key).
+- `attendance` is a pure pickup-gate: `unattended` means an agent may pick this task up; `attended` excludes it from agent pickup. `effort` is pure metadata in v1: it is stored, surfaced, and filterable, but the CLI does not act on it (no automatic model selection, no ordering bias). Orchestration loops outside `tasks` are free to interpret it.
 - `title` constraints: non-empty, single line, max 200 characters.
 - **Acceptance criteria** live in the markdown body as a conventional `## Acceptance Criteria` section, not in frontmatter. The body remains free-form markdown otherwise. When `--json` is set on read commands, the tool parses the `## Acceptance Criteria` section out of the body and exposes it as an `acceptance_criteria` string field (empty string if the section is absent). The body itself is also returned as `body`.
 - **Acceptance Criteria parsing rules** (exact, for consistency across implementations and agent consumers):
@@ -173,16 +176,17 @@ updated_at: 2026-05-27T10:14:00Z
 ### CLI surface (v1)
 
 - `tasks init` — explicit initializer (rarely needed; `tasks new` auto-initializes).
-- `tasks new <title> [--deps <id|uuid>...] [--agent-ready] [--human-in-loop] [--edit] [--body -]` — create a task in `backlog/`. By default, title-only and no editor. `--edit` opens `$EDITOR` for the body after creation; `--body -` reads the body from stdin. Validator runs before commit.
-- `tasks show <id|uuid> [--json]` — display a task. Human rendering: header block (id, uuid, column, deps with their `#id title`, flags, timestamps) followed by the body markdown with light ANSI styling (bold headings, dim metadata). JSON returns the full structured task.
+- `tasks new <title> [--deps <id|uuid>...] [--unattended] [--effort <low|medium|high>] [--edit] [--body -]` — create a task in `backlog/`. By default, title-only and no editor; `attendance` defaults to `attended` and `effort` to `medium`. `--unattended` sets `attendance: unattended` at creation. `--edit` opens `$EDITOR` for the body after creation; `--body -` reads the body from stdin. Validator runs before commit.
+- `tasks set <id|uuid> [--title <title>] [--attendance <attended|unattended>] [--effort <low|medium|high>]` — scalar setter for the three fields a single command can change cleanly. At least one flag is required; passing zero flags is an error. Multiple flags in one invocation are applied and committed together. `--title` recomputes the slug and performs the content update plus `git mv` in the same commit, matching the title-change semantics of `tasks edit`. `--attendance` and `--effort` validate the enum value (`INVALID_ATTENDANCE` / `INVALID_EFFORT` on a bad value). Deps are mutated via `link`/`unlink`, not `set`.
+- `tasks show <id|uuid> [--json]` — display a task. Human rendering: header block (id, uuid, column, deps with their `#id title`, `attendance`, `effort`, timestamps) followed by the body markdown with light ANSI styling (bold headings, dim metadata). `list` and `board` render attendance and effort as compact dim-styled glyphs per row rather than full words so the kanban layout stays tight. JSON returns the full structured task.
 - `tasks edit <id|uuid> [--abort]` — open the file in `$EDITOR`; validate on save. On invalid save, the command rejects the save, keeps the bad file on disk, prints an error, and exits non-zero — no commit is made. The user can re-run `tasks edit <id>` to fix in place (this command is exempt from the dirty-tree check), or `tasks edit --abort` to discard all pending changes in the store and restore the working tree to HEAD. If the user changes the `title` in frontmatter, `edit` recomputes the slug and performs the content update + `git mv` in the same commit, so the filename always reflects the current title.
 - `tasks mv <id|uuid> <column>` — move a task between columns via `git mv`. Moving to the current column is a no-op (no commit, exit 0).
 - `tasks link <id|uuid> --depends-on <id|uuid>...` — add edges; `--depends-on` is repeatable; a single invocation produces a single commit covering all added edges.
 - `tasks unlink <id|uuid> --depends-on <id|uuid>...` — remove edges; same multi-arg and single-commit semantics.
 - `tasks rm <id|uuid> [--force]` — delete a task. If any other task lists this task in its `deps`, the command refuses unless `--force` is given. With `--force`, the task is deleted and dangling UUID references are stripped from all dependents in the same commit; the command prints the affected tasks to stderr before committing (e.g. `tasks: rm #42 — stripped dep from #17, #19, #23`) so the cascade is never invisible.
-- `tasks list [--column <name>...] [--all] [--since <duration>] [--json]` — flat list. `--column` is repeatable. By default, includes all six columns but hides `done/` tasks whose `updated_at` is older than 7 days. `--all` shows everything regardless of age. `--since 30d` overrides the cutoff window.
+- `tasks list [--column <name>...] [--attendance <attended|unattended>] [--effort <low|medium|high>] [--all] [--since <duration>] [--json]` — flat list. `--column` is repeatable; `--attendance` and `--effort` take a single value each (omit the flag for no filter on that axis). By default, includes all six columns but hides `done/` tasks whose `updated_at` is older than 7 days. `--all` shows everything regardless of age. `--since 30d` overrides the cutoff window.
 - `tasks board [--all] [--since <duration>] [--json]` — kanban view. Side-by-side columns with fixed widths, ANSI box-drawing, titles truncated per column. Same default 7-day cutoff for `done/`; same `--all` and `--since` overrides. Static print, no TUI.
-- `tasks next [--json]` — show the next task that is in `ready/`, has all deps complete (in `done/`), and has `agent_ready: true`. Among multiple candidates, returns the one with the oldest `created_at`. Exits non-zero with `NO_READY_TASK` if no candidate exists.
+- `tasks next [--attendance <attended|unattended>] [--unattended] [--json]` — show the next task that is in `ready/` and has all deps complete (in `done/`). No attendance filter by default, so a human running `tasks next` sees the oldest ready, unblocked task regardless of who should pick it up. Agents pass `--unattended` (shorthand for `--attendance unattended`) to restrict to safe-for-agent work; this is the direct replacement of the old `agent_ready: true` gate. Among multiple candidates, returns the one with the oldest `created_at`. Exits non-zero with `NO_READY_TASK` if no candidate exists.
 - `tasks undo` — `git revert --no-edit HEAD` in the store, then commit. The revert itself is a new commit; undo is non-destructive and itself undoable. If HEAD is the initial empty commit (nothing to undo), the command refuses with a `NOTHING_TO_UNDO` error and exits non-zero.
 
 ### Output
@@ -193,7 +197,7 @@ updated_at: 2026-05-27T10:14:00Z
   ```json
   { "error": { "code": "CYCLE_DETECTED", "message": "...", "details": { ... } } }
   ```
-  `code` is a stable machine-readable enum. Defined codes for v1 include: `STORE_DIRTY`, `NOT_FOUND`, `CYCLE_DETECTED`, `UNKNOWN_UUID`, `MISSING_FIELD`, `INVALID_TITLE`, `INVALID_COLUMN`, `DEP_EXISTS` (rm without `--force`), `NO_READY_TASK`, `NOTHING_TO_UNDO`. Without `--json`, errors are plain text on stderr.
+  `code` is a stable machine-readable enum. Defined codes for v1 include: `STORE_DIRTY`, `NOT_FOUND`, `CYCLE_DETECTED`, `UNKNOWN_UUID`, `MISSING_FIELD`, `INVALID_TITLE`, `INVALID_COLUMN`, `INVALID_ATTENDANCE`, `INVALID_EFFORT`, `DEP_EXISTS` (rm without `--force`), `NO_READY_TASK`, `NOTHING_TO_UNDO`. Without `--json`, errors are plain text on stderr.
 
 ### Transitions and column gating
 
