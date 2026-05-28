@@ -121,8 +121,7 @@ Both the `[auto]` gutter and the arrow reserve are computed **per lane** (presen
 
 - The `○` / `●` attendance glyph (replaced by the `[auto]` tag).
 - The effort tag (`·L`, `·M`, `·H`).
-- The bracketed `[blocked by #N]` suffix (replaced by the `← #N` arrow).
-- The `--blocked-by` flag is **removed** from `tasks board`. Arrows are unconditional, so the flag has no job; passing it now errors as an unknown flag. (Acceptable pre-1.0; arrows subsume it.)
+- The bracketed `[blocked by #N]` suffix (today rendered unconditionally) is replaced by the `← #N` arrow. There is no `--blocked-by` flag on `tasks board` (the marker was always on), so nothing is removed from the CLI surface — the arrow is likewise unconditional.
 
 ## Vertical fallback
 
