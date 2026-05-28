@@ -2,6 +2,15 @@
 import { existsSync } from "node:fs";
 import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, editTask, abortPendingEdits, linkTask, unlinkTask, setTask, TasksError, COLUMNS, type TaskData, type EditorRunner } from "./store.ts";
 import { renderTask, renderList, renderBoard } from "./render.ts";
+import { parseAcceptanceCriteria } from "./acceptance.ts";
+
+/**
+ * Decorate a TaskData object with the `acceptance_criteria` field parsed from
+ * its `body`. Always emitted as a string (empty string when absent).
+ */
+function withAcceptanceCriteria<T extends { body: string }>(task: T): T & { acceptance_criteria: string } {
+  return { ...task, acceptance_criteria: parseAcceptanceCriteria(task.body) };
+}
 
 /**
  * Write a JSON error envelope to stderr.
@@ -316,7 +325,7 @@ if (command === "new") {
     .map((t) => ({ uuid: t.uuid, id: t.id, title: t.title }));
 
   if (jsonFlag) {
-    process.stdout.write(JSON.stringify({ ...task, deps_out, deps_in }) + "\n");
+    process.stdout.write(JSON.stringify({ ...withAcceptanceCriteria(task), deps_out, deps_in }) + "\n");
   } else {
     process.stdout.write(renderTask(task, { color: shouldColor(), deps_out, deps_in }));
   }
@@ -456,7 +465,7 @@ if (command === "new") {
   }
 
   if (jsonFlag) {
-    process.stdout.write(JSON.stringify(tasks) + "\n");
+    process.stdout.write(JSON.stringify(tasks.map(withAcceptanceCriteria)) + "\n");
   } else {
     process.stdout.write(renderList(tasks, { color: shouldColor() }));
   }
@@ -511,7 +520,11 @@ if (command === "new") {
   const grouped = groupTasksByColumn(tasks);
 
   if (jsonFlag) {
-    process.stdout.write(JSON.stringify(grouped) + "\n");
+    const groupedWithAc: Record<string, Array<TaskData & { acceptance_criteria: string }>> = {};
+    for (const [col, list] of Object.entries(grouped)) {
+      groupedWithAc[col] = list.map(withAcceptanceCriteria);
+    }
+    process.stdout.write(JSON.stringify(groupedWithAc) + "\n");
   } else {
     process.stdout.write(renderBoard(grouped, { color: shouldColor() }));
   }
@@ -1115,7 +1128,7 @@ if (command === "new") {
     .map((t) => ({ uuid: t.uuid, id: t.id, title: t.title }));
 
   if (jsonFlag) {
-    process.stdout.write(JSON.stringify({ ...task, deps_out, deps_in }) + "\n");
+    process.stdout.write(JSON.stringify({ ...withAcceptanceCriteria(task), deps_out, deps_in }) + "\n");
   } else {
     process.stdout.write(renderTask(task, { color: shouldColor(), deps_out, deps_in }));
   }
