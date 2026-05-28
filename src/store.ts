@@ -1540,3 +1540,77 @@ export function findTask(dir: string, idOrUuid: string): TaskData | null {
 
   return null;
 }
+
+/**
+ * Run `git -C <dir> <args>` capturing stdout/stderr. Returns trimmed stdout
+ * when exit code is 0; throws otherwise with the combined stderr.
+ */
+async function gitCapture(dir: string, args: string[]): Promise<string> {
+  const proc = Bun.spawn(["git", "-C", dir, ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const code = await proc.exited;
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  if (code !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${stderr.trim() || stdout.trim()}`);
+  }
+  return stdout.trim();
+}
+
+/**
+ * Revert the most recent commit in the store with `git revert --no-edit HEAD`.
+ *
+ * Refuses with NOTHING_TO_UNDO when HEAD is the root (auto-init seed) commit,
+ * detected by comparing `git rev-parse HEAD` against
+ * `git rev-list --max-parents=0 HEAD`.
+ *
+ * Returns the SHA of the revert commit (now HEAD) on success.
+ */
+export async function undoStore(dir: string): Promise<{ revertSha: string; revertedSha: string }> {
+  return withLock(dir, async () => {
+    if (await isStoreDirty(dir)) {
+      throw new TasksError(
+        "STORE_DIRTY",
+        "store working tree is dirty; commit or discard pending changes before running mutating commands",
+        {}
+      );
+    }
+
+    const head = await gitCapture(dir, ["rev-parse", "HEAD"]);
+    const root = await gitCapture(dir, ["rev-list", "--max-parents=0", "HEAD"]);
+
+    if (head === root) {
+      throw new TasksError(
+        "NOTHING_TO_UNDO",
+        "nothing to undo: store has no mutations beyond the initial commit",
+        {}
+      );
+    }
+
+    const proc = Bun.spawn(["git", "-C", dir, "revert", "--no-edit", "HEAD"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const code = await proc.exited;
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    if (code !== 0) {
+      // Best-effort cleanup so the working tree is not left mid-revert.
+      const abort = Bun.spawn(["git", "-C", dir, "revert", "--abort"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await abort.exited;
+      throw new TasksError(
+        "UNDO_FAILED",
+        `git revert failed: ${stderr.trim() || stdout.trim()}`,
+        {}
+      );
+    }
+
+    const revertSha = await gitCapture(dir, ["rev-parse", "HEAD"]);
+    return { revertSha, revertedSha: head };
+  });
+}

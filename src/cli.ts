@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
-import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, editTask, abortPendingEdits, linkTask, unlinkTask, setTask, TasksError, COLUMNS, type TaskData, type EditorRunner } from "./store.ts";
+import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, editTask, abortPendingEdits, linkTask, unlinkTask, setTask, undoStore, TasksError, COLUMNS, type TaskData, type EditorRunner } from "./store.ts";
 import { renderTask, renderList, renderBoard } from "./render.ts";
 import { parseAcceptanceCriteria } from "./acceptance.ts";
 
@@ -1131,6 +1131,56 @@ if (command === "new") {
     process.stdout.write(JSON.stringify({ ...withAcceptanceCriteria(task), deps_out, deps_in }) + "\n");
   } else {
     process.stdout.write(renderTask(task, { color: shouldColor(), deps_out, deps_in }));
+  }
+} else if (command === "undo") {
+  const jsonFlag = rest.includes("--json");
+
+  // Check flock availability BEFORE any store/git work.
+  try {
+    findFlockOrFail();
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        process.stderr.write(`${err.message}\n`);
+      }
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  const dir = storeDir(process.cwd());
+  await ensureStore(dir);
+
+  // Early dirty-tree check (outside lock) for a fast, clear error message.
+  if (await isStoreDirty(dir)) {
+    const msg = "store working tree is dirty; commit or discard pending changes before running mutating commands";
+    if (jsonFlag) {
+      writeJsonError("STORE_DIRTY", msg, {});
+    } else {
+      process.stderr.write(`tasks: STORE_DIRTY: ${msg}\n`);
+    }
+    process.exit(1);
+  }
+
+  try {
+    const { revertSha, revertedSha } = await undoStore(dir);
+    if (jsonFlag) {
+      process.stdout.write(JSON.stringify({ ok: true, reverted: revertedSha, revert: revertSha }) + "\n");
+    } else {
+      process.stdout.write(`tasks: undid ${revertedSha.slice(0, 7)} (revert ${revertSha.slice(0, 7)})\n`);
+    }
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        writePlainError(`${err.code}: ${err.message}`);
+      }
+      process.exit(1);
+    }
+    throw err;
   }
 }
 
