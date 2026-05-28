@@ -114,16 +114,57 @@ function sortForList(tasks: TaskData[]): TaskData[] {
   });
 }
 
+// Fixed layout budget for the human list view (see docs/specs/list-rendering.md).
+// Layout is pinned to a ~120-col target and is NOT adaptive to the terminal.
+const LIST_TOTAL_W = 120;
+const LIST_GAP = 2;
+const LIST_COL_W = 7; // longest column name: "backlog"
+const LIST_GUTTER_W = 6; // width of the "[auto]" gutter
+const LIST_ARROW_RESERVE = 12; // tail reserved for the dependency arrow
+
+/**
+ * Build the dependency-arrow tail for a row, fitting it into
+ * {@link LIST_ARROW_RESERVE} columns. Returns "" when there are no unmet
+ * blockers. When the full `← #a, #b, …` list overflows the tail, as many ids
+ * as fit are shown followed by ` +N` (N = hidden count); room for ` +N` is
+ * reserved so the tail never overflows, and at least one id is always shown.
+ */
+function dependencyArrow(ids: number[]): string {
+  if (ids.length === 0) return "";
+  const full = `← ${ids.map((n) => `#${n}`).join(", ")}`;
+  if (full.length <= LIST_ARROW_RESERVE) return full;
+  for (let k = ids.length - 1; k >= 1; k--) {
+    const candidate = `← ${ids.slice(0, k).map((n) => `#${n}`).join(", ")} +${ids.length - k}`;
+    if (candidate.length <= LIST_ARROW_RESERVE) return candidate;
+  }
+  // Always show at least one id, even if it nominally overflows.
+  return `← #${ids[0]} +${ids.length - 1}`;
+}
+
+/**
+ * Truncate `title` to at most `width` display columns, replacing the overflow
+ * with a trailing `…` (which counts as one column). Does not pad short titles.
+ */
+function fitTitle(title: string, width: number): string {
+  if (title.length <= width) return title;
+  return title.slice(0, width - 1) + "…";
+}
+
 /**
  * Render a flat list of tasks as a human-readable string.
  *
- * Each task is one line: `#<id>  <column padded>  <title>  <glyphs>`
+ * Each row lays out, left to right with a 2-space gap between fields:
+ *   `#<id>`  ·  column  ·  [auto] gutter (only if any row is unattended)  ·
+ *   title (padded/truncated to a fixed field)  ·  `← #N, #N` arrow (only on
+ *   rows with unmet upstream blockers, pinned to a fixed tab stop).
+ *
  * Rows are ordered by status (ready→doing→blocked→review→done→backlog), then by
  * short id ascending within each status. An empty task array renders as a single
  * `(no tasks)` line.
  *
- * When `options.color` is true, the column name is styled with cyan and the
- * id prefix is bold. Stripping ANSI from a colored render yields the plain render.
+ * When `options.color` is true, the id prefix is bold and the column name cyan.
+ * The gutter and arrow are not tinted. Stripping ANSI from a colored render
+ * yields byte-for-byte the plain render.
  */
 export function renderList(tasks: TaskData[], options: RenderOptions): string {
   const color = options.color === true;
@@ -132,13 +173,39 @@ export function renderList(tasks: TaskData[], options: RenderOptions): string {
     return "(no tasks)\n";
   }
 
+  const ordered = sortForList(tasks);
+  const blockedBy = options.blockedBy;
+
+  const idW = Math.max(...ordered.map((t) => `#${t.id}`.length));
+  const anyUnattended = ordered.some((t) => t.attendance === "unattended");
+
+  const prefix =
+    idW + LIST_GAP + LIST_COL_W + LIST_GAP + (anyUnattended ? LIST_GUTTER_W + LIST_GAP : 0);
+  const titleW = Math.max(10, LIST_TOTAL_W - prefix - LIST_GAP - LIST_ARROW_RESERVE);
+
   const lines: string[] = [];
-  for (const task of sortForList(tasks)) {
-    const id = style(`#${task.id}`, ANSI.bold, color);
-    const col = style(task.column.padEnd(8, " "), ANSI.cyan, color);
-    const g = style(glyphs(task), ANSI.dim, color);
-    const marker = blockedByMarker(task, options.blockedBy);
-    lines.push(`${id}  ${col}  ${task.title}  ${g}${marker}`);
+  for (const task of ordered) {
+    const idPlain = `#${task.id}`.padEnd(idW, " ");
+    const id = style(idPlain, ANSI.bold, color);
+    const colPlain = task.column.padEnd(LIST_COL_W, " ");
+    const col = style(colPlain, ANSI.cyan, color);
+
+    const gutter = anyUnattended
+      ? (task.attendance === "unattended" ? "[auto]" : " ".repeat(LIST_GUTTER_W)) + " ".repeat(LIST_GAP)
+      : "";
+
+    const ids = blockedBy?.get(task.uuid) ?? [];
+    const arrow = dependencyArrow(ids);
+
+    const titleText = fitTitle(task.title, titleW);
+    // Pad the title to the fixed field only when an arrow follows, so arrows
+    // pin to the tab stop; rows without arrows carry no trailing whitespace.
+    const body =
+      arrow.length > 0
+        ? `${titleText.padEnd(titleW, " ")}${" ".repeat(LIST_GAP)}${arrow}`
+        : titleText;
+
+    lines.push(`${id}${" ".repeat(LIST_GAP)}${col}${" ".repeat(LIST_GAP)}${gutter}${body}`);
   }
 
   return lines.join("\n") + "\n";

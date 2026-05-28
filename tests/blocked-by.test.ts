@@ -47,7 +47,7 @@ function findRowById(stdout: string, id: number): string | undefined {
 
 // ─── list: human output ──────────────────────────────────────────────────────
 
-test("list: row with two unresolved direct blockers shows [blocked by #1,#2] after O·M", async () => {
+test("list: row with two unresolved direct blockers shows the ← #1, #2 arrow", async () => {
   await runTasks(["new", "blocker one"]); // #1
   await runTasks(["new", "blocker two"]); // #2
   await runTasks(["new", "subject"]); // #3
@@ -58,12 +58,11 @@ test("list: row with two unresolved direct blockers shows [blocked by #1,#2] aft
 
   const row = findRowById(stdout, 3);
   expect(row).toBeDefined();
-  expect(row!).toContain("[blocked by #1,#2]");
-  // Marker must appear AFTER the O·M (glyph) cluster.
-  const omIdx = row!.search(/[●○]·[LMH]/);
-  const markerIdx = row!.indexOf("[blocked by");
-  expect(omIdx).toBeGreaterThan(-1);
-  expect(markerIdx).toBeGreaterThan(omIdx);
+  // New layout: dependency arrow replaces the old [blocked by] marker.
+  expect(row!).toContain("← #1, #2");
+  expect(row!).not.toContain("[blocked by");
+  // The arrow comes after the title.
+  expect(row!.indexOf("subject")).toBeLessThan(row!.indexOf("←"));
 });
 
 test("list: row with all blockers in done shows no marker", async () => {
@@ -80,7 +79,7 @@ test("list: row with all blockers in done shows no marker", async () => {
   expect(row!).not.toContain("[blocked by");
 });
 
-test("list: row in doing with an unresolved blocker shows the marker", async () => {
+test("list: row in doing with an unresolved blocker shows the arrow", async () => {
   await runTasks(["new", "blocker"]); // #1
   await runTasks(["new", "subject"]); // #2
   await runTasks(["link", "2", "--depends-on", "1"]);
@@ -91,7 +90,9 @@ test("list: row in doing with an unresolved blocker shows the marker", async () 
 
   const row = findRowById(stdout, 2);
   expect(row).toBeDefined();
-  expect(row!).toContain("[blocked by #1]");
+  // Arrows render on rows in any column, not just backlog.
+  expect(row!).toContain("← #1");
+  expect(row!).not.toContain("[blocked by");
 });
 
 test("list: row with no deps shows no marker", async () => {
@@ -105,7 +106,7 @@ test("list: row with no deps shows no marker", async () => {
   expect(row!).not.toContain("[blocked by");
 });
 
-test("list: marker ids are sorted ascending by short id", async () => {
+test("list: arrow ids are sorted ascending by short id", async () => {
   // Create 4 blockers then a subject; link in reverse order to ensure sort.
   await runTasks(["new", "b1"]); // #1
   await runTasks(["new", "b2"]); // #2
@@ -118,7 +119,7 @@ test("list: marker ids are sorted ascending by short id", async () => {
 
   const row = findRowById(stdout, 4);
   expect(row).toBeDefined();
-  expect(row!).toContain("[blocked by #1,#2,#3]");
+  expect(row!).toContain("← #1, #2, #3");
 });
 
 test("list: filters done blockers but keeps unresolved ones in marker", async () => {
@@ -133,7 +134,8 @@ test("list: filters done blockers but keeps unresolved ones in marker", async ()
 
   const row = findRowById(stdout, 3);
   expect(row).toBeDefined();
-  expect(row!).toContain("[blocked by #2]");
+  expect(row!).toContain("← #2");
+  expect(row!).not.toContain("[blocked by");
   expect(row!).not.toContain("#1");
 });
 
