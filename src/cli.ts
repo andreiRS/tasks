@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
-import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, editTask, abortPendingEdits, linkTask, unlinkTask, setTask, undoStore, TasksError, COLUMNS, type TaskData, type EditorRunner } from "./store.ts";
+import { storeDir, ensureStore, initStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, editTask, abortPendingEdits, linkTask, unlinkTask, setTask, undoStore, TasksError, COLUMNS, type TaskData, type EditorRunner } from "./store.ts";
 import { renderTask, renderList, renderBoard } from "./render.ts";
 import { parseAcceptanceCriteria } from "./acceptance.ts";
 
@@ -1131,6 +1131,45 @@ if (command === "new") {
     process.stdout.write(JSON.stringify({ ...withAcceptanceCriteria(task), deps_out, deps_in }) + "\n");
   } else {
     process.stdout.write(renderTask(task, { color: shouldColor(), deps_out, deps_in }));
+  }
+} else if (command === "init") {
+  const jsonFlag = rest.includes("--json");
+
+  // Check flock availability BEFORE any store/git work.
+  try {
+    findFlockOrFail();
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        process.stderr.write(`${err.message}\n`);
+      }
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  const dir = storeDir(process.cwd());
+
+  try {
+    const { created, path } = await initStore(dir);
+    if (jsonFlag) {
+      process.stdout.write(JSON.stringify({ ok: true, path, created }) + "\n");
+    } else if (!created) {
+      process.stderr.write(`tasks: store already exists at ${path}\n`);
+    }
+    // On fresh init, initStore already prints the "initialized store at" notice.
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        writePlainError(`${err.code}: ${err.message}`);
+      }
+      process.exit(1);
+    }
+    throw err;
   }
 } else if (command === "undo") {
   const jsonFlag = rest.includes("--json");
