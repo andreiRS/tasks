@@ -1312,6 +1312,156 @@ export async function unlinkTask(
 }
 
 /**
+ * Options for `setTask`. At least one field must be supplied; the caller
+ * (CLI) is responsible for surfacing MISSING_FIELD when nothing is passed.
+ */
+export interface SetTaskOptions {
+  title?: string;
+  attendance?: "attended" | "unattended";
+  effort?: "low" | "medium" | "high";
+}
+
+/**
+ * Scalar setter for the three fields a single command can change cleanly.
+ *
+ * - Applies all provided fields and commits in ONE commit.
+ * - `--title` recomputes the slug and performs the content update plus
+ *   `git mv` in the same commit (matches `editTask` title-change semantics).
+ * - `--attendance` and `--effort` enum values are pre-validated by the caller
+ *   (so callers can choose human or JSON error envelopes); this function
+ *   additionally re-validates to guard internal callers.
+ * - `--title` is validated via the shared `validateTitle`.
+ * - Bumps `updated_at`.
+ *
+ * Acquires flock. Honors the dirty-tree guard inside the lock.
+ */
+export async function setTask(
+  dir: string,
+  idOrUuid: string,
+  opts: SetTaskOptions,
+): Promise<void> {
+  return withLock(dir, async () => {
+    // Dirty-tree guard inside the lock (definitive check)
+    if (await isStoreDirty(dir)) {
+      throw new TasksError(
+        "STORE_DIRTY",
+        "store working tree is dirty; commit or discard pending changes before running mutating commands",
+        {}
+      );
+    }
+
+    // Reject if any existing task file carries an invalid enum value.
+    validateEnums(dir);
+
+    // Validate inputs.
+    if (opts.title !== undefined) {
+      const err = validateTitle(opts.title);
+      if (err !== null) {
+        throw new TasksError("INVALID_TITLE", err, {});
+      }
+    }
+    if (opts.attendance !== undefined && resolveAttendance(opts.attendance) === null) {
+      throw new TasksError(
+        "INVALID_ATTENDANCE",
+        `invalid attendance: ${String(opts.attendance)}. Allowed: ${ATTENDANCE_VALUES.join(", ")}`,
+        { value: opts.attendance, allowed: [...ATTENDANCE_VALUES] },
+      );
+    }
+    if (opts.effort !== undefined && resolveEffort(opts.effort) === null) {
+      throw new TasksError(
+        "INVALID_EFFORT",
+        `invalid effort: ${String(opts.effort)}. Allowed: ${EFFORT_VALUES.join(", ")}`,
+        { value: opts.effort, allowed: [...EFFORT_VALUES] },
+      );
+    }
+
+    // Find the task on disk.
+    const loc = findTaskFilename(dir, idOrUuid);
+    if (!loc) {
+      throw new TasksError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
+    }
+    const { column, filename } = loc;
+    const filePath = join(dir, column, filename);
+    const raw = readFileSync(filePath, "utf-8");
+    const parts = raw.split(/^---\s*$/m);
+    if (parts.length < 3) {
+      throw new TasksError("INVALID_TITLE", "task file is missing YAML frontmatter", {});
+    }
+    const oldFm = yamlParse(parts[1]) as Record<string, unknown>;
+    const id = oldFm.id as number;
+    const oldTitle = oldFm.title as string;
+
+    // Build the new frontmatter text by substituting individual lines (preserve
+    // formatting/order of unrelated keys).
+    let newFm = parts[1];
+    if (opts.title !== undefined) {
+      // Replace the title line. Use a JSON-encoded scalar so colons/quotes in
+      // the title round-trip cleanly through yamlParse on the next read.
+      const encoded = JSON.stringify(opts.title);
+      newFm = newFm.replace(/^title:.*$/m, `title: ${encoded}`);
+    }
+    if (opts.attendance !== undefined) {
+      if (/^attendance:/m.test(newFm)) {
+        newFm = newFm.replace(/^attendance:.*$/m, `attendance: ${opts.attendance}`);
+      } else {
+        // Append before trailing newline of frontmatter block.
+        newFm = newFm.replace(/\n?$/, `\nattendance: ${opts.attendance}\n`);
+      }
+    }
+    if (opts.effort !== undefined) {
+      if (/^effort:/m.test(newFm)) {
+        newFm = newFm.replace(/^effort:.*$/m, `effort: ${opts.effort}`);
+      } else {
+        newFm = newFm.replace(/\n?$/, `\neffort: ${opts.effort}\n`);
+      }
+    }
+    // Bump updated_at.
+    const now = new Date().toISOString();
+    if (/^updated_at:/m.test(newFm)) {
+      newFm = newFm.replace(/^(updated_at:\s*)(.+)$/m, `$1${now}`);
+    } else {
+      newFm = newFm.replace(/\n?$/, `\nupdated_at: ${now}\n`);
+    }
+
+    const newContent = `---${newFm}---${parts.slice(2).join("---")}`;
+    writeFileSync(filePath, newContent, "utf-8");
+
+    const oldRelPath = `${column}/${filename}`;
+    const titleChanged = opts.title !== undefined && opts.title !== oldTitle;
+
+    if (titleChanged) {
+      const newSlug = slugify(opts.title as string);
+      const newFilename = `${id}-${newSlug}.md`;
+      const newRelPath = `${column}/${newFilename}`;
+      const newFilePath = join(dir, column, newFilename);
+
+      if (newFilename !== filename) {
+        // Stage the content modification first so `git mv` sees it.
+        await git(["add", oldRelPath], dir);
+        const mvExit = await git(["mv", oldRelPath, newRelPath], dir);
+        if (mvExit !== 0) {
+          // Fall back: manual rename + git add/rm
+          renameSync(filePath, newFilePath);
+          await git(["rm", oldRelPath], dir);
+          await git(["add", newRelPath], dir);
+        }
+      } else {
+        await git(["add", oldRelPath], dir);
+      }
+    } else {
+      await git(["add", oldRelPath], dir);
+    }
+
+    // Build a descriptive commit message listing which fields changed.
+    const changed: string[] = [];
+    if (opts.title !== undefined) changed.push("title");
+    if (opts.attendance !== undefined) changed.push("attendance");
+    if (opts.effort !== undefined) changed.push("effort");
+    await git(["commit", "-m", `task: set #${id} ${changed.join(", ")}`], dir);
+  });
+}
+
+/**
  * Find a task by short id (positive integer string) or UUID.
  * Walks all six column directories.
  * Returns TaskData (with normalized defaults) or null if not found.

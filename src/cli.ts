@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
-import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, editTask, abortPendingEdits, linkTask, unlinkTask, TasksError, COLUMNS, type TaskData, type EditorRunner } from "./store.ts";
+import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, editTask, abortPendingEdits, linkTask, unlinkTask, setTask, TasksError, COLUMNS, type TaskData, type EditorRunner } from "./store.ts";
 import { renderTask, renderList, renderBoard } from "./render.ts";
 
 /**
@@ -810,6 +810,138 @@ if (command === "new") {
 
   try {
     await unlinkTask(dir, subjectRef, targetRefs);
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        writePlainError(`${err.code}: ${err.message}`);
+      }
+      process.exit(1);
+    }
+    throw err;
+  }
+} else if (command === "set") {
+  const jsonFlag = rest.includes("--json");
+
+  // Parse subject (first positional arg before any flag)
+  const posArgs = rest.filter((a) => !a.startsWith("--"));
+  const subjectRef = posArgs[0] ?? "";
+
+  // Parse value flags: --title, --attendance, --effort. Track presence
+  // separately from value so an explicit empty string can be flagged as
+  // INVALID_TITLE rather than silently dropped.
+  let titleValue: string | undefined;
+  let titlePresent = false;
+  let attendanceValue: string | undefined;
+  let effortValue: string | undefined;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "--title" && i + 1 < rest.length) {
+      titleValue = rest[i + 1];
+      titlePresent = true;
+      i++;
+    } else if (rest[i] === "--attendance" && i + 1 < rest.length) {
+      attendanceValue = rest[i + 1];
+      i++;
+    } else if (rest[i] === "--effort" && i + 1 < rest.length) {
+      effortValue = rest[i + 1];
+      i++;
+    }
+  }
+
+  if (!subjectRef) {
+    const msg = "usage: tasks set <id|uuid> [--title <title>] [--attendance <attended|unattended>] [--effort <low|medium|high>]";
+    if (jsonFlag) {
+      writeJsonError("MISSING_FIELD", msg, {});
+    } else {
+      writePlainError(`MISSING_FIELD: ${msg}`);
+    }
+    process.exit(1);
+  }
+
+  if (!titlePresent && attendanceValue === undefined && effortValue === undefined) {
+    const msg = "tasks set requires at least one of --title, --attendance, --effort";
+    if (jsonFlag) {
+      writeJsonError("MISSING_FIELD", msg, {});
+    } else {
+      writePlainError(`MISSING_FIELD: ${msg}`);
+    }
+    process.exit(1);
+  }
+
+  // Pre-validate enum values up front (before any store/git work) so the user
+  // gets a clear error before we acquire the lock.
+  if (attendanceValue !== undefined) {
+    const valid = ["attended", "unattended"];
+    if (!valid.includes(attendanceValue)) {
+      const msg = `invalid --attendance value: ${attendanceValue}. Allowed: ${valid.join(", ")}`;
+      if (jsonFlag) {
+        writeJsonError("INVALID_ATTENDANCE", msg, { value: attendanceValue, allowed: valid });
+      } else {
+        writePlainError(`INVALID_ATTENDANCE: ${msg}`);
+      }
+      process.exit(1);
+    }
+  }
+  if (effortValue !== undefined) {
+    const valid = ["low", "medium", "high"];
+    if (!valid.includes(effortValue)) {
+      const msg = `invalid --effort value: ${effortValue}. Allowed: ${valid.join(", ")}`;
+      if (jsonFlag) {
+        writeJsonError("INVALID_EFFORT", msg, { value: effortValue, allowed: valid });
+      } else {
+        writePlainError(`INVALID_EFFORT: ${msg}`);
+      }
+      process.exit(1);
+    }
+  }
+  if (titlePresent) {
+    const err = validateTitle(titleValue ?? "");
+    if (err !== null) {
+      if (jsonFlag) {
+        writeJsonError("INVALID_TITLE", err, {});
+      } else {
+        writePlainError(`INVALID_TITLE: ${err}`);
+      }
+      process.exit(1);
+    }
+  }
+
+  // Check flock availability
+  try {
+    findFlockOrFail();
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        process.stderr.write(`${err.message}\n`);
+      }
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  const dir = storeDir(process.cwd());
+  await ensureStore(dir);
+
+  // Early dirty-tree check
+  if (await isStoreDirty(dir)) {
+    const msg = "store working tree is dirty; commit or discard pending changes before running mutating commands";
+    if (jsonFlag) {
+      writeJsonError("STORE_DIRTY", msg, {});
+    } else {
+      process.stderr.write(`tasks: STORE_DIRTY: ${msg}\n`);
+    }
+    process.exit(1);
+  }
+
+  try {
+    await setTask(dir, subjectRef, {
+      title: titlePresent ? titleValue : undefined,
+      attendance: attendanceValue as "attended" | "unattended" | undefined,
+      effort: effortValue as "low" | "medium" | "high" | undefined,
+    });
   } catch (err) {
     if (err instanceof TasksError) {
       if (jsonFlag) {
