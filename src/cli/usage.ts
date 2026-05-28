@@ -35,6 +35,9 @@ Commands:
                           Retire done/ tasks into archive/ (no-arg = all).
   export --json [--include-archived] [--columns <col,col,...>]
                           Whole-Store JSON dump for agents (live tasks + dep graph).
+  summary --json [--recent <N>] [--stale <Nd>]
+                          Compact Store digest: per-column counts, recent tasks,
+                          and stale tasks in doing/blocked/review.
   help                    Show this message.
 
 Global flags:
