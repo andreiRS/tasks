@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, closeSync, openSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, closeSync, openSync, renameSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { stringify as yamlStringify, parse as yamlParse } from "yaml";
@@ -317,21 +317,32 @@ export async function createTask(dir: string, title: string, opts: CreateTaskOpt
     // Update meta.yaml
     writeFileSync(metaPath, `next_id: ${id + 1}\n`, "utf-8");
 
-    // Stage both files and commit
     const taskRelPath = `backlog/${filename}`;
-    await git(["add", taskRelPath, "meta.yaml"], dir);
-    await git(["commit", "-m", `task: new #${id} — ${title}`], dir);
 
     // If an editor runner was provided, open the editor on the newly created
-    // file. This mirrors `tasks edit` behavior: validate + commit on change,
-    // noop on unchanged, throw on invalid.
+    // file BEFORE committing. This keeps the invariant of one commit per
+    // invocation: the single commit covers the file's final state after the
+    // editor session, including any user edits. On editor failure or
+    // validation failure we roll back the on-disk writes so the working tree
+    // stays clean and no abandoned id is wasted in meta.yaml.
     if (opts.runEditor) {
+      const rollback = (): void => {
+        try { rmSync(taskPath, { force: true }); } catch { /* ignore */ }
+        try {
+          if (existsSync(metaPath)) {
+            // Restore the previous next_id so the abandoned id is reused.
+            writeFileSync(metaPath, `next_id: ${id}\n`, "utf-8");
+          }
+        } catch { /* ignore */ }
+      };
+
       const before = readFileSync(taskPath, "utf-8");
 
       let exit: number;
       try {
         exit = await opts.runEditor(taskPath);
       } catch (err) {
+        rollback();
         throw new TasksError(
           "EDITOR_FAILED",
           `editor failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -339,20 +350,23 @@ export async function createTask(dir: string, title: string, opts: CreateTaskOpt
         );
       }
       if (exit !== 0) {
+        rollback();
         throw new TasksError("EDITOR_FAILED", `editor exited with code ${exit}`, { exit });
       }
 
       const after = readFileSync(taskPath, "utf-8");
       if (after !== before) {
-        // Parse and validate. Bad title -> leave file as-is, throw.
+        // Parse and validate. Bad title -> roll back, throw.
         const parts = after.split(/^---\s*$/m);
         if (parts.length < 3) {
+          rollback();
           throw new TasksError("INVALID_TITLE", "task file is missing YAML frontmatter", {});
         }
         let fm: Record<string, unknown>;
         try {
           fm = yamlParse(parts[1]) as Record<string, unknown>;
         } catch (err) {
+          rollback();
           throw new TasksError(
             "INVALID_TITLE",
             `invalid YAML frontmatter: ${err instanceof Error ? err.message : String(err)}`,
@@ -361,18 +375,21 @@ export async function createTask(dir: string, title: string, opts: CreateTaskOpt
         }
         const titleErr = validateTitle(fm.title);
         if (titleErr !== null) {
+          rollback();
           throw new TasksError("INVALID_TITLE", titleErr, {});
         }
 
-        // Bump updated_at
+        // Bump updated_at so timestamps reflect the editor session.
         const editNow = new Date().toISOString();
         const bumped = after.replace(/^(updated_at:\s*)(.+)$/m, `$1${editNow}`);
         writeFileSync(taskPath, bumped, "utf-8");
-
-        await git(["add", taskRelPath], dir);
-        await git(["commit", "-m", `task: edit #${id}`], dir);
       }
     }
+
+    // Stage both files and commit. Exactly one commit per invocation, whether
+    // or not the editor ran (and whether or not the editor mutated the file).
+    await git(["add", taskRelPath, "meta.yaml"], dir);
+    await git(["commit", "-m", `task: new #${id} — ${title}`], dir);
 
     return id;
   });

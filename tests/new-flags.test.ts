@@ -296,6 +296,43 @@ test("tasks new --edit opens editor after creation and commits body", async () =
   expect(body).toContain("body added by editor");
 });
 
+test("tasks new --edit produces exactly one commit per invocation", async () => {
+  const storeDir = getStoreDir();
+
+  // Seed the store with an initial task so the store and its git repo exist
+  // and we have a known baseline HEAD to count from.
+  await plantTask("seed task");
+
+  const countCommits = async (): Promise<number> => {
+    const proc = Bun.spawn(["git", "rev-list", "HEAD", "--count"], {
+      cwd: storeDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, out] = await Promise.all([proc.exited, new Response(proc.stdout).text()]);
+    return parseInt(out.trim(), 10);
+  };
+
+  const before = await countCommits();
+
+  // Editor stub that mutates the body so the editor session causes a real change.
+  const editorScript = join(editorScriptDir, "append-editor-single-commit.sh");
+  writeFileSync(
+    editorScript,
+    `#!/bin/sh\nprintf '\\nbody added by editor' >> "$1"\n`,
+    "utf-8",
+  );
+  chmodSync(editorScript, 0o755);
+
+  const { exitCode } = await runTasks(["new", "single commit task", "--edit"], {
+    extraEnv: { EDITOR: editorScript },
+  });
+  expect(exitCode).toBe(0);
+
+  const after = await countCommits();
+  expect(after - before).toBe(1);
+});
+
 test("tasks new --edit with no EDITOR set exits non-zero with NO_EDITOR", async () => {
   const { exitCode, stderr } = await runTasks(["new", "task needs editor", "--edit"], {
     extraEnv: { EDITOR: undefined, VISUAL: undefined },
