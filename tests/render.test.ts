@@ -47,8 +47,6 @@ test("renderTask returns the pinned human-readable layout", () => {
     updated_at: "2026-05-27T10:14:00.000Z",
     body: "Some body text.\n\nWith two paragraphs.",
     deps: [],
-    agent_ready: false,
-    human_in_loop: false,
     attendance: "attended",
     effort: "medium",
   };
@@ -61,8 +59,6 @@ test("renderTask returns the pinned human-readable layout", () => {
     "uuid:          7f3a9c2e-1234-4567-89ab-cdef01234567\n" +
     "column:        backlog\n" +
     "deps:          (none)\n" +
-    "agent_ready:   false\n" +
-    "human_in_loop: false\n" +
     "Attendance:    attended\n" +
     "Effort:        medium\n" +
     "created_at:    2026-05-27T10:14:00.000Z\n" +
@@ -90,8 +86,6 @@ test("renderTask lists deps as UUIDs when present and reflects flags", () => {
       "bbbbbbbb-2222-4222-8222-222222222222",
       "cccccccc-3333-4333-8333-333333333333",
     ],
-    agent_ready: true,
-    human_in_loop: true,
     attendance: "attended",
     effort: "medium",
   };
@@ -100,8 +94,6 @@ test("renderTask lists deps as UUIDs when present and reflects flags", () => {
 
   expect(out).toContain("#7 wire up handler");
   expect(out).toContain("column:        doing");
-  expect(out).toContain("agent_ready:   true");
-  expect(out).toContain("human_in_loop: true");
   expect(out).toContain("deps:");
   expect(out).toContain("bbbbbbbb-2222-4222-8222-222222222222");
   expect(out).toContain("cccccccc-3333-4333-8333-333333333333");
@@ -148,8 +140,6 @@ const sampleTask: TaskData = {
   updated_at: "2026-05-27T10:14:00.000Z",
   body: "Some body text.",
   deps: [],
-  agent_ready: false,
-  human_in_loop: false,
   attendance: "attended",
   effort: "medium",
 };

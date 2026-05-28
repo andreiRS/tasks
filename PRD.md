@@ -238,9 +238,9 @@ These are explicitly excluded from v1 and not planned for the immediately follow
 - Subtasks. The model is flat: tasks with dependencies, nothing else.
 - Configurable column sets per project. The six columns are fixed in v1.
 - A TUI. `tasks board` is a static print.
-- Auto-dispatching tasks to Claude Code sub-agents. The data model carries the `agent_ready` flag; the orchestration loop is a separate concern.
+- Auto-dispatching tasks to Claude Code sub-agents. The `attendance` field signals eligibility; the orchestration loop is a separate concern.
 - An agent-driven `tasks breakdown` command that splits a task into linked children.
-- Enforced semantics for `agent_ready`. In v1 it is a plain boolean flag.
+- Enforced routing semantics for `attendance: unattended`. In v1 it is a plain enum value with no automated dispatch.
 - Cross-project dependencies. Each project is isolated.
 - Time tracking, due dates, priorities, recurring tasks, urgency scoring.
 - Encryption at rest.

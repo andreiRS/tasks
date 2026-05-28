@@ -90,8 +90,6 @@ function makeTask(id: number, column: string, title: string): TaskData {
     updated_at: "2026-05-27T10:00:00.000Z",
     body: "",
     deps: [],
-    agent_ready: false,
-    human_in_loop: false,
     attendance: "attended",
     effort: "medium",
   };

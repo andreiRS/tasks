@@ -443,8 +443,6 @@ export interface TaskData {
   updated_at: string;
   body: string;
   deps: string[];
-  agent_ready: boolean;
-  human_in_loop: boolean;
   attendance: "attended" | "unattended";
   effort: "low" | "medium" | "high";
 }
@@ -602,8 +600,6 @@ export function findAllTasks(dir: string): TaskData[] {
         updated_at: fm.updated_at as string,
         body,
         deps: Array.isArray(fm.deps) ? (fm.deps as string[]) : [],
-        agent_ready: typeof fm.agent_ready === "boolean" ? fm.agent_ready : false,
-        human_in_loop: typeof fm.human_in_loop === "boolean" ? fm.human_in_loop : false,
         attendance: resolveAttendance(fm.attendance) ?? DEFAULT_ATTENDANCE,
         effort: resolveEffort(fm.effort) ?? DEFAULT_EFFORT,
       });
@@ -1566,8 +1562,6 @@ export function findTask(dir: string, idOrUuid: string): TaskData | null {
           updated_at: fm.updated_at as string,
           body,
           deps: Array.isArray(fm.deps) ? (fm.deps as string[]) : [],
-          agent_ready: typeof fm.agent_ready === "boolean" ? fm.agent_ready : false,
-          human_in_loop: typeof fm.human_in_loop === "boolean" ? fm.human_in_loop : false,
           attendance: resolveAttendance(fm.attendance) ?? DEFAULT_ATTENDANCE,
           effort: resolveEffort(fm.effort) ?? DEFAULT_EFFORT,
         };

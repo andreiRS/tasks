@@ -117,8 +117,6 @@ export function renderBoard(grouped: Record<string, TaskData[]>, options: Render
  *   deps:          (none) | <first uuid>
  *                  <next uuid>
  *                  ...
- *   agent_ready:   <bool>
- *   human_in_loop: <bool>
  *   created_at:    <iso>
  *   updated_at:    <iso>
  *   <blank line>
@@ -148,8 +146,6 @@ export function renderTask(task: TaskData, options: RenderOptions = {}): string 
     }
   }
 
-  lines.push(`${label("agent_ready:")}${task.agent_ready}`);
-  lines.push(`${label("human_in_loop:")}${task.human_in_loop}`);
   lines.push(`${label("Attendance:")}${task.attendance}`);
   lines.push(`${label("Effort:")}${task.effort}`);
   lines.push(`${label("created_at:")}${task.created_at}`);

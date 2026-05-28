@@ -47,8 +47,6 @@ const sampleTasks: TaskData[] = [
     updated_at: "2026-05-27T10:00:00.000Z",
     body: "",
     deps: [],
-    agent_ready: false,
-    human_in_loop: false,
     attendance: "attended",
     effort: "medium",
   },
@@ -61,8 +59,6 @@ const sampleTasks: TaskData[] = [
     updated_at: "2026-05-27T10:01:00.000Z",
     body: "",
     deps: [],
-    agent_ready: false,
-    human_in_loop: false,
     attendance: "attended",
     effort: "medium",
   },
@@ -188,8 +184,6 @@ test("tasks list --json returns all tasks in canonical column order", async () =
     expect(typeof t.created_at).toBe("string");
     expect(typeof t.updated_at).toBe("string");
     expect(Array.isArray(t.deps)).toBe(true);
-    expect(typeof t.agent_ready).toBe("boolean");
-    expect(typeof t.human_in_loop).toBe("boolean");
   }
 });
 

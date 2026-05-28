@@ -89,9 +89,6 @@ test("tasks show 1 --json returns structured task with correct fields", async ()
   expect(Array.isArray(parsed.deps)).toBe(true);
   expect((parsed.deps as unknown[]).length).toBe(0);
 
-  // flags: normalized defaults
-  expect(parsed.agent_ready).toBe(false);
-  expect(parsed.human_in_loop).toBe(false);
 });
 
 // ─── Test 2: lookup by UUID ───────────────────────────────────────────────────
