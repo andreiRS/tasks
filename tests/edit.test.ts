@@ -343,7 +343,66 @@ edited despite dirty tree
   expect(rawAfter).toContain("edited despite dirty tree");
 });
 
-// ─── Test 9: --abort ─────────────────────────────────────────────────────────
+// ─── Test 9: editor leaves stray files (vim swap, nano backup, .DS_Store) ────
+
+test("tasks edit followed by another mutation: editor swap/backup files must not trip STORE_DIRTY", async () => {
+  const id = await plantTask("subject task");
+  const storeDir = deriveStoreDir();
+  const filename = filesInColumn(storeDir, "backlog")[0];
+
+  // Editor that modifies the file AND leaves a vim-style swap file behind,
+  // a nano-style backup, and a macOS .DS_Store — all common in real-world use.
+  const replacementPath = join(editorScriptDir, "stray-content.txt");
+  const rawBefore = readTaskFile(storeDir, "backlog", filename);
+  const { fm: fmBefore } = parseTask(rawBefore);
+  const replacement = `---
+id: ${fmBefore.id}
+uuid: ${fmBefore.uuid}
+title: ${fmBefore.title}
+created_at: ${fmBefore.created_at}
+updated_at: ${fmBefore.updated_at}
+---
+edited body
+`;
+  writeFileSync(replacementPath, replacement, "utf-8");
+  const scriptPath = join(editorScriptDir, "stray-editor.sh");
+  writeFileSync(
+    scriptPath,
+    `#!/bin/sh
+DIR=$(dirname "$1")
+BASE=$(basename "$1")
+cp "${replacementPath}" "$1"
+# vim-style swap file
+touch "$DIR/.\${BASE}.swp"
+# nano/emacs-style backup file
+touch "$DIR/\${BASE}~"
+# macOS Finder droppings
+touch "$DIR/.DS_Store"
+`,
+    "utf-8",
+  );
+  chmodSync(scriptPath, 0o755);
+
+  const { exitCode: editExit } = await runTasks(["edit", String(id)], { EDITOR: scriptPath });
+  expect(editExit).toBe(0);
+
+  // Every subsequent mutating command (new, mv, rm) must survive editor-droppings.
+  // Today they all fail with STORE_DIRTY because the droppings are untracked in
+  // the store git tree.
+  const { exitCode: newExit, stderr: newStderr } = await runTasks(["new", "follow-up task"]);
+  expect(newStderr).not.toContain("STORE_DIRTY");
+  expect(newExit).toBe(0);
+
+  const { exitCode: mvExit, stderr: mvStderr } = await runTasks(["mv", String(id), "doing"]);
+  expect(mvStderr).not.toContain("STORE_DIRTY");
+  expect(mvExit).toBe(0);
+
+  const { exitCode: rmExit, stderr: rmStderr } = await runTasks(["rm", String(id), "--force"]);
+  expect(rmStderr).not.toContain("STORE_DIRTY");
+  expect(rmExit).toBe(0);
+});
+
+// ─── Test 10: --abort ────────────────────────────────────────────────────────
 
 test("tasks edit --abort resets working tree to HEAD", async () => {
   const id = await plantTask("revertable");

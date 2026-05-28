@@ -102,6 +102,7 @@ async function git(args: string[], cwd: string): Promise<number> {
  */
 export async function ensureStore(dir: string): Promise<boolean> {
   if (existsSync(join(dir, ".git"))) {
+    await upsertGitignore(dir);
     return false;
   }
 
@@ -114,9 +115,7 @@ export async function ensureStore(dir: string): Promise<boolean> {
   // git init
   await git(["init"], dir);
 
-  // Ignore the lock file — flock(1) needs a real file on disk, but we don't
-  // want it tracked or showing up in `git status`.
-  writeFileSync(join(dir, ".gitignore"), ".tasks-lock\n", "utf-8");
+  writeFileSync(join(dir, ".gitignore"), STORE_GITIGNORE, "utf-8");
   await git(["add", ".gitignore"], dir);
 
   // Initial commit (includes .gitignore)
@@ -124,6 +123,42 @@ export async function ensureStore(dir: string): Promise<boolean> {
 
   process.stderr.write(`tasks: initialized store at ${dir}\n`);
   return true;
+}
+
+/**
+ * Canonical store `.gitignore`. The lock file is required (flock(1) needs a
+ * real on-disk file but it must not be tracked). The remaining patterns
+ * cover editor droppings that would otherwise leave the store dirty after
+ * an `edit` and trip the STORE_DIRTY guard on the next mutating command.
+ */
+const STORE_GITIGNORE = [
+  ".tasks-lock",
+  "",
+  "# Editor droppings",
+  ".*.sw?",     // vim swap (.foo.swp, .foo.swo, …)
+  "*~",         // emacs/nano backup
+  ".#*",        // emacs lockfile
+  "*.bak",
+  "*.orig",
+  "",
+  "# OS junk",
+  ".DS_Store",
+  "Thumbs.db",
+  "",
+].join("\n");
+
+/**
+ * Idempotently ensure the store's `.gitignore` matches the canonical
+ * content. If the file is missing or differs, write it and commit just
+ * that path so a pre-existing dirty tree elsewhere is not touched.
+ */
+async function upsertGitignore(dir: string): Promise<void> {
+  const path = join(dir, ".gitignore");
+  const current = existsSync(path) ? readFileSync(path, "utf-8") : "";
+  if (current === STORE_GITIGNORE) return;
+  writeFileSync(path, STORE_GITIGNORE, "utf-8");
+  await git(["add", ".gitignore"], dir);
+  await git(["commit", "-m", "store: refresh .gitignore", "--", ".gitignore"], dir);
 }
 
 /**
