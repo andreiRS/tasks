@@ -196,3 +196,30 @@ test("tasks link resolves target by short numeric id", async () => {
   const deps = await getTaskDeps(String(taskA.id));
   expect(deps).toContain(taskB.uuid);
 });
+
+// ─── Test 9: --json success envelope ─────────────────────────────────────────
+
+test("tasks link --json emits success envelope with ok/id/uuid/added", async () => {
+  const taskA = await plantTask("link json A");
+  const taskB = await plantTask("link json B");
+  const taskC = await plantTask("link json C");
+
+  const { exitCode, stdout, stderr } = await runTasks([
+    "link", String(taskA.id),
+    "--depends-on", taskB.uuid,
+    "--depends-on", taskC.uuid,
+    "--json",
+  ]);
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  let parsed: Record<string, unknown>;
+  expect(() => { parsed = JSON.parse(stdout); }).not.toThrow();
+  parsed = JSON.parse(stdout);
+  expect(parsed.ok).toBe(true);
+  expect(parsed.id).toBe(taskA.id);
+  expect(parsed.uuid).toBe(taskA.uuid);
+  expect(Array.isArray(parsed.added)).toBe(true);
+  expect(parsed.added as string[]).toContain(taskB.uuid);
+  expect(parsed.added as string[]).toContain(taskC.uuid);
+});

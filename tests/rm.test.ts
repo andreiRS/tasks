@@ -168,3 +168,73 @@ test("after tasks rm, tasks show returns NOT_FOUND", async () => {
   const parsed = JSON.parse(stderr) as Record<string, unknown>;
   expect((parsed.error as Record<string, unknown>).code).toBe("NOT_FOUND");
 });
+
+// ─── Test 7: --json success envelope (no cascade) ────────────────────────────
+
+test("tasks rm --json emits success envelope with ok/id/uuid/forced/cascaded", async () => {
+  const id = await plantTask("json rm task");
+
+  const { stdout: showOut } = await runTasks(["show", String(id), "--json"]);
+  const task = JSON.parse(showOut) as Record<string, unknown>;
+  const uuid = task.uuid as string;
+
+  const { exitCode, stdout, stderr } = await runTasks(["rm", String(id), "--json"]);
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  let parsed: Record<string, unknown>;
+  expect(() => { parsed = JSON.parse(stdout); }).not.toThrow();
+  parsed = JSON.parse(stdout);
+  expect(parsed.ok).toBe(true);
+  expect(parsed.id).toBe(id);
+  expect(parsed.uuid).toBe(uuid);
+  expect(parsed.forced).toBe(false);
+  expect(parsed.cascaded).toEqual([]);
+});
+
+// ─── Test 8: --force --json with cascade ─────────────────────────────────────
+
+test("tasks rm --force --json with a dependent: cascaded contains dependent uuid", async () => {
+  const idA = await plantTask("anchor json");
+  const idB = await plantTask("dependent json");
+  const storeDir = deriveStoreDir();
+
+  // Get UUIDs
+  const { stdout: showA } = await runTasks(["show", String(idA), "--json"]);
+  const taskA = JSON.parse(showA) as Record<string, unknown>;
+  const uuidA = taskA.uuid as string;
+
+  const { stdout: showB } = await runTasks(["show", String(idB), "--json"]);
+  const taskB = JSON.parse(showB) as Record<string, unknown>;
+  const uuidB = taskB.uuid as string;
+
+  // Inject dep: B depends on A (using git directly to keep store clean)
+  const gitBin = Bun.which("git") ?? "/opt/homebrew/bin/git";
+  const colDir = join(storeDir, "backlog");
+  const { readdirSync: rds, readFileSync: rfs, writeFileSync: wfs } = await import("node:fs");
+  const files = rds(colDir).filter((f: string) => f.startsWith(`${idB}-`) && f.endsWith(".md"));
+  const filePath = join(colDir, files[0]);
+  const raw = rfs(filePath, "utf-8");
+  const parts = raw.split(/^---\s*$/m);
+  const newFm = parts[1].replace(/^deps:.*$/m, `deps: ["${uuidA}"]`);
+  wfs(filePath, `---${newFm}---${parts.slice(2).join("---")}`, "utf-8");
+  const addProc = Bun.spawnSync([gitBin, "add", `backlog/${files[0]}`], { cwd: storeDir });
+  if (addProc.exitCode !== 0) throw new Error("git add failed");
+  const commitProc = Bun.spawnSync([gitBin, "commit", "-m", "test: inject dep"], { cwd: storeDir });
+  if (commitProc.exitCode !== 0) throw new Error("git commit failed");
+
+  const { exitCode, stdout, stderr } = await runTasks(["rm", String(idA), "--force", "--json"]);
+  expect(exitCode).toBe(0);
+  // affected info goes to stderr (human output), JSON envelope to stdout
+  expect(stderr).toContain(`#${idB}`);
+
+  let parsed: Record<string, unknown>;
+  expect(() => { parsed = JSON.parse(stdout); }).not.toThrow();
+  parsed = JSON.parse(stdout);
+  expect(parsed.ok).toBe(true);
+  expect(parsed.id).toBe(idA);
+  expect(parsed.uuid).toBe(uuidA);
+  expect(parsed.forced).toBe(true);
+  expect(Array.isArray(parsed.cascaded)).toBe(true);
+  expect(parsed.cascaded as string[]).toContain(uuidB);
+});

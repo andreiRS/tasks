@@ -583,6 +583,12 @@ if (command === "new") {
     process.exit(1);
   }
 
+  // Look up the task before moving so we can emit envelope fields (id, uuid, from)
+  let mvTaskBefore: TaskData | null = null;
+  if (jsonFlag) {
+    mvTaskBefore = findTask(dir, idOrUuid);
+  }
+
   try {
     await moveTask(dir, idOrUuid, targetColumn);
   } catch (err) {
@@ -595,6 +601,10 @@ if (command === "new") {
       process.exit(1);
     }
     throw err;
+  }
+
+  if (jsonFlag && mvTaskBefore) {
+    process.stdout.write(JSON.stringify({ ok: true, id: mvTaskBefore.id, uuid: mvTaskBefore.uuid, from: mvTaskBefore.column, to: targetColumn }) + "\n");
   }
 } else if (command === "rm") {
   const jsonFlag = rest.includes("--json");
@@ -641,10 +651,13 @@ if (command === "new") {
   }
 
   try {
-    const { affected } = await removeTask(dir, idOrUuid, forceFlag);
+    const { task: rmTask, affected } = await removeTask(dir, idOrUuid, forceFlag);
     // Print affected (modified) tasks to stderr when force-stripping dependents
     for (const t of affected) {
       process.stderr.write(`affected: #${t.id} ${t.title}\n`);
+    }
+    if (jsonFlag) {
+      process.stdout.write(JSON.stringify({ ok: true, id: rmTask.id, uuid: rmTask.uuid, forced: forceFlag, cascaded: affected.map((t) => t.uuid) }) + "\n");
     }
   } catch (err) {
     if (err instanceof TasksError) {
@@ -707,9 +720,15 @@ if (command === "new") {
     process.exit(1);
   }
 
+  // Look up the task before editing so we have id/uuid for the envelope
+  let editTaskBefore: TaskData | null = null;
+  if (jsonFlag) {
+    editTaskBefore = findTask(dir, idOrUuid);
+  }
+
   // Edit is EXEMPT from STORE_DIRTY by PRD design.
   try {
-    await editTask(dir, idOrUuid, async (filePath: string) => {
+    const editResult = await editTask(dir, idOrUuid, async (filePath: string) => {
       // Spawn `$EDITOR <file>` through the shell so values like
       // `cp /path/to/x` (or `true`/`false`) work naturally.
       const proc = Bun.spawn(["sh", "-c", `${editorEnv} "$1"`, "sh", filePath], {
@@ -719,6 +738,9 @@ if (command === "new") {
       });
       return await proc.exited;
     });
+    if (jsonFlag && editTaskBefore) {
+      process.stdout.write(JSON.stringify({ ok: true, id: editTaskBefore.id, uuid: editTaskBefore.uuid, changed: editResult.kind !== "noop" }) + "\n");
+    }
   } catch (err) {
     if (err instanceof TasksError) {
       if (jsonFlag) {
@@ -795,6 +817,12 @@ if (command === "new") {
     process.exit(1);
   }
 
+  // Look up subject before linking so we can compute added UUIDs for envelope
+  let linkSubjectBefore: TaskData | null = null;
+  if (jsonFlag) {
+    linkSubjectBefore = findTask(dir, subjectRef);
+  }
+
   try {
     await linkTask(dir, subjectRef, targetRefs);
   } catch (err) {
@@ -807,6 +835,14 @@ if (command === "new") {
       process.exit(1);
     }
     throw err;
+  }
+
+  if (jsonFlag && linkSubjectBefore) {
+    // Compute added: deps after minus deps before
+    const subjectAfter = findTask(dir, linkSubjectBefore.uuid);
+    const beforeSet = new Set(linkSubjectBefore.deps);
+    const added = (subjectAfter?.deps ?? []).filter((u) => !beforeSet.has(u));
+    process.stdout.write(JSON.stringify({ ok: true, id: linkSubjectBefore.id, uuid: linkSubjectBefore.uuid, added }) + "\n");
   }
 } else if (command === "unlink") {
   const jsonFlag = rest.includes("--json");
@@ -873,6 +909,12 @@ if (command === "new") {
     process.exit(1);
   }
 
+  // Look up subject before unlinking so we can compute removed UUIDs for envelope
+  let unlinkSubjectBefore: TaskData | null = null;
+  if (jsonFlag) {
+    unlinkSubjectBefore = findTask(dir, subjectRef);
+  }
+
   try {
     await unlinkTask(dir, subjectRef, targetRefs);
   } catch (err) {
@@ -885,6 +927,14 @@ if (command === "new") {
       process.exit(1);
     }
     throw err;
+  }
+
+  if (jsonFlag && unlinkSubjectBefore) {
+    // Compute removed: deps before minus deps after
+    const subjectAfter = findTask(dir, unlinkSubjectBefore.uuid);
+    const afterSet = new Set(subjectAfter?.deps ?? []);
+    const removed = unlinkSubjectBefore.deps.filter((u) => !afterSet.has(u));
+    process.stdout.write(JSON.stringify({ ok: true, id: unlinkSubjectBefore.id, uuid: unlinkSubjectBefore.uuid, removed }) + "\n");
   }
 } else if (command === "set") {
   const jsonFlag = rest.includes("--json");
@@ -1001,6 +1051,12 @@ if (command === "new") {
     process.exit(1);
   }
 
+  // Look up subject before setting so we can compute which fields actually changed
+  let setTaskBefore: TaskData | null = null;
+  if (jsonFlag) {
+    setTaskBefore = findTask(dir, subjectRef);
+  }
+
   try {
     await setTask(dir, subjectRef, {
       title: titlePresent ? titleValue : undefined,
@@ -1017,6 +1073,20 @@ if (command === "new") {
       process.exit(1);
     }
     throw err;
+  }
+
+  if (jsonFlag && setTaskBefore) {
+    const changed: Record<string, unknown> = {};
+    if (titlePresent && titleValue !== setTaskBefore.title) {
+      changed.title = titleValue;
+    }
+    if (attendanceValue !== undefined && attendanceValue !== setTaskBefore.attendance) {
+      changed.attendance = attendanceValue;
+    }
+    if (effortValue !== undefined && effortValue !== setTaskBefore.effort) {
+      changed.effort = effortValue;
+    }
+    process.stdout.write(JSON.stringify({ ok: true, id: setTaskBefore.id, uuid: setTaskBefore.uuid, changed }) + "\n");
   }
 } else if (command === "next") {
   const jsonFlag = rest.includes("--json");

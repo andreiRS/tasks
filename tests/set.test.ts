@@ -209,3 +209,31 @@ test("tasks set on unknown id returns NOT_FOUND", async () => {
   expect(exitCode).not.toBe(0);
   expect(stderr).toContain("NOT_FOUND");
 });
+
+// ─── --json success envelope ──────────────────────────────────────────────────
+
+test("tasks set --json emits success envelope; changed only includes set fields", async () => {
+  const t = await plantTask("set json task");
+
+  // Set only --effort (not --title or --attendance)
+  const { exitCode, stdout, stderr } = await runTasks([
+    "set", String(t.id),
+    "--effort", "high",
+    "--json",
+  ]);
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  let parsed: Record<string, unknown>;
+  expect(() => { parsed = JSON.parse(stdout); }).not.toThrow();
+  parsed = JSON.parse(stdout);
+  expect(parsed.ok).toBe(true);
+  expect(parsed.id).toBe(t.id);
+  expect(parsed.uuid).toBe(t.uuid);
+  const changed = parsed.changed as Record<string, unknown>;
+  expect(changed).toHaveProperty("effort", "high");
+  // title was not set, so it must not appear
+  expect(changed).not.toHaveProperty("title");
+  // attendance was not set, so it must not appear
+  expect(changed).not.toHaveProperty("attendance");
+});

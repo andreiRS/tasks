@@ -200,3 +200,31 @@ test("tasks unlink A --depends-on A exits non-zero with SELF_LINK", async () => 
   expect(exitCode).not.toBe(0);
   expect(stderr).toContain("SELF_LINK");
 });
+
+// ─── Test 7: --json success envelope ─────────────────────────────────────────
+
+test("tasks unlink --json emits success envelope with ok/id/uuid/removed", async () => {
+  const taskA = await plantTask("unlink json A");
+  const taskB = await plantTask("unlink json B");
+  const taskC = await plantTask("unlink json C");
+  await linkTasks(taskA.id, taskB.uuid);
+  await linkTasks(taskA.id, taskC.uuid);
+
+  const { exitCode, stdout, stderr } = await runTasks([
+    "unlink", String(taskA.id),
+    "--depends-on", taskB.uuid,
+    "--json",
+  ]);
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  let parsed: Record<string, unknown>;
+  expect(() => { parsed = JSON.parse(stdout); }).not.toThrow();
+  parsed = JSON.parse(stdout);
+  expect(parsed.ok).toBe(true);
+  expect(parsed.id).toBe(taskA.id);
+  expect(parsed.uuid).toBe(taskA.uuid);
+  expect(Array.isArray(parsed.removed)).toBe(true);
+  expect(parsed.removed as string[]).toContain(taskB.uuid);
+  expect(parsed.removed as string[]).not.toContain(taskC.uuid);
+});

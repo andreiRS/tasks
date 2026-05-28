@@ -232,3 +232,49 @@ test("tasks mv accepts UUID instead of short id", async () => {
   expect(findFileInColumn(storeDir, "doing")).not.toBeNull();
   expect(await gitLogCount(storeDir)).toBe(commitsBefore + 1);
 });
+
+// ─── Test 9: --json success envelope ─────────────────────────────────────────
+
+test("tasks mv --json emits success envelope with ok/id/uuid/from/to", async () => {
+  await plantTask("json mv task");
+
+  const { stdout: showOut } = await runTasks(["show", "1", "--json"]);
+  const task = JSON.parse(showOut) as Record<string, unknown>;
+  const uuid = task.uuid as string;
+
+  const { exitCode, stdout, stderr } = await runTasks(["mv", "1", "ready", "--json"]);
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  let parsed: Record<string, unknown>;
+  expect(() => { parsed = JSON.parse(stdout); }).not.toThrow();
+  parsed = JSON.parse(stdout);
+  expect(parsed.ok).toBe(true);
+  expect(parsed.id).toBe(1);
+  expect(parsed.uuid).toBe(uuid);
+  expect(parsed.from).toBe("backlog");
+  expect(parsed.to).toBe("ready");
+});
+
+// ─── Test 10: --json same-column no-op envelope ───────────────────────────────
+
+test("tasks mv --json same-column no-op emits envelope with from === to", async () => {
+  await plantTask("noop json task");
+
+  const { stdout: showOut } = await runTasks(["show", "1", "--json"]);
+  const task = JSON.parse(showOut) as Record<string, unknown>;
+  const uuid = task.uuid as string;
+
+  const { exitCode, stdout, stderr } = await runTasks(["mv", "1", "backlog", "--json"]);
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  let parsed: Record<string, unknown>;
+  expect(() => { parsed = JSON.parse(stdout); }).not.toThrow();
+  parsed = JSON.parse(stdout);
+  expect(parsed.ok).toBe(true);
+  expect(parsed.id).toBe(1);
+  expect(parsed.uuid).toBe(uuid);
+  expect(parsed.from).toBe("backlog");
+  expect(parsed.to).toBe("backlog");
+});

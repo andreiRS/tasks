@@ -402,6 +402,65 @@ touch "$DIR/.DS_Store"
   expect(rmExit).toBe(0);
 });
 
+// ─── Test 9b: --json with real edit (changed: true) ──────────────────────────
+
+test("tasks edit --json after real edit emits envelope with changed: true", async () => {
+  const id = await plantTask("json edit task");
+  const storeDir = deriveStoreDir();
+  const filename = filesInColumn(storeDir, "backlog")[0];
+  const rawBefore = readTaskFile(storeDir, "backlog", filename);
+  const { fm: fmBefore } = parseTask(rawBefore);
+
+  const { stdout: showOut } = await runTasks(["show", String(id), "--json"]);
+  const taskInfo = JSON.parse(showOut) as Record<string, unknown>;
+  const uuid = taskInfo.uuid as string;
+
+  const replacement = `---
+id: ${fmBefore.id}
+uuid: ${fmBefore.uuid}
+title: ${fmBefore.title}
+created_at: ${fmBefore.created_at}
+updated_at: ${fmBefore.updated_at}
+---
+json edit body here
+`;
+  const editor = makeReplaceEditor(replacement, "json-ed");
+
+  const { exitCode, stdout, stderr } = await runTasks(["edit", String(id), "--json"], { EDITOR: editor });
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  let parsed: Record<string, unknown>;
+  expect(() => { parsed = JSON.parse(stdout); }).not.toThrow();
+  parsed = JSON.parse(stdout);
+  expect(parsed.ok).toBe(true);
+  expect(parsed.id).toBe(id);
+  expect(parsed.uuid).toBe(uuid);
+  expect(parsed.changed).toBe(true);
+});
+
+// ─── Test 9c: --json with no-op edit (changed: false) ────────────────────────
+
+test("tasks edit --json after no-op (EDITOR=true) emits envelope with changed: false", async () => {
+  const id = await plantTask("json noop edit task");
+
+  const { stdout: showOut } = await runTasks(["show", String(id), "--json"]);
+  const taskInfo = JSON.parse(showOut) as Record<string, unknown>;
+  const uuid = taskInfo.uuid as string;
+
+  const { exitCode, stdout, stderr } = await runTasks(["edit", String(id), "--json"], { EDITOR: "true" });
+  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+
+  let parsed: Record<string, unknown>;
+  expect(() => { parsed = JSON.parse(stdout); }).not.toThrow();
+  parsed = JSON.parse(stdout);
+  expect(parsed.ok).toBe(true);
+  expect(parsed.id).toBe(id);
+  expect(parsed.uuid).toBe(uuid);
+  expect(parsed.changed).toBe(false);
+});
+
 // ─── Test 10: --abort ────────────────────────────────────────────────────────
 
 test("tasks edit --abort resets working tree to HEAD", async () => {
