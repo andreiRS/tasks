@@ -128,7 +128,7 @@ test("tasks export --json: single ready task carries frontmatter, body, and pars
 
 // ─── Slice 3: ordering by column, then created_at within column ──────────────
 
-test.skip("tasks export --json: tasks grouped by canonical column order, sorted by created_at within column", async () => {
+test("tasks export --json: tasks grouped by canonical column order, sorted by created_at within column", async () => {
   // Create 4 tasks. Move them into different columns and exercise within-column
   // ordering by created_at. Default creation order is backlog with id ascending.
   await runTasks(["new", "alpha"]);

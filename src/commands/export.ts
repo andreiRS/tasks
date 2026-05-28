@@ -77,7 +77,27 @@ export async function run(rest: string[]): Promise<void> {
   }
 
   const liveTasks = findAllTasks(dir);
-  const tasksOut: ExportedLiveTask[] = liveTasks.map(toLiveExport);
+
+  // Group by Column in the fixed COLUMNS order, then sort each bucket by
+  // `created_at` ascending. The export contract guarantees this ordering so
+  // diffs across invocations are stable.
+  const grouped: Record<string, TaskData[]> = {};
+  for (const col of COLUMNS) grouped[col] = [];
+  for (const t of liveTasks) {
+    if (grouped[t.column]) grouped[t.column].push(t);
+  }
+  const ordered: TaskData[] = [];
+  for (const col of COLUMNS) {
+    grouped[col].sort((a, b) => {
+      const ta = new Date(a.created_at).getTime();
+      const tb = new Date(b.created_at).getTime();
+      if (ta !== tb) return ta - tb;
+      return a.id - b.id;
+    });
+    ordered.push(...grouped[col]);
+  }
+
+  const tasksOut: ExportedLiveTask[] = ordered.map(toLiveExport);
 
   const headSha = await readHeadSha(dir);
 
