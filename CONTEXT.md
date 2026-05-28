@@ -19,7 +19,7 @@ The working directory rooted at the nearest ancestor `.git/` directory (falling 
 _Avoid_: workspace, repo (ambiguous with the Store's git repo), folder.
 
 **Store**:
-The per-Project git repository under `$TASKS_HOME/projects/<encoded-path>/` (where `TASKS_HOME` defaults to `~/.local/share/tasks`) that holds every Task file plus its Meta (`meta.yaml`). The Store is the system of record; the CLI is the only sanctioned writer.
+The per-Project git repository under `$TASKS_HOME/projects/<encoded-path>/` (where `TASKS_HOME` defaults to `~/.tasks`) that holds every Task file plus its Meta (`meta.yaml`). The Store is the system of record; the CLI is the only sanctioned writer.
 _Avoid_: database, backend, data dir.
 
 **Meta** (also: `meta.yaml`):

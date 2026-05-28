@@ -33,23 +33,26 @@ From the repo root:
 
 ```sh
 bun install
-bun run src/cli.ts --help
+bun link                # exposes `tasks` on $PATH (uses package.json's bin entry)
+tasks --help
 ```
 
-While developing, invoke commands directly via the entry point:
+After linking, every example below works as written: `tasks new "..."`, `tasks list`, etc.
+
+For a standalone binary (no Bun required at runtime):
+
+```sh
+bun run build           # produces dist/tasks
+./dist/tasks --help
+```
+
+If you'd rather not link, you can always invoke the entry point directly while developing:
 
 ```sh
 bun run src/cli.ts <command> [...args]
 ```
 
-A compiled single-file binary is wired up in `package.json`:
-
-```sh
-bun run build           # produces dist/tasks
-./dist/tasks <command>
-```
-
-Set `$TASKS_HOME` to choose where stores live (defaults to `~/.local/share/tasks`). Tests rely on this override for hermetic tempdirs.
+Set `$TASKS_HOME` to choose where stores live (defaults to `~/.tasks`, so the on-disk layout is `~/.tasks/projects/<encoded-project-root>/`, mirroring Claude Code's per-project convention under `~/.claude/projects/`). Tests rely on this override for hermetic tempdirs.
 
 ## Frontmatter shape
 
@@ -82,9 +85,9 @@ Flags:
 - `--body -` — read the body from stdin.
 
 ```sh
-bun run src/cli.ts new "Wire up OAuth flow"
-bun run src/cli.ts new "Ship release notes" --unattended --effort low --deps 3 --deps 5
-echo "## Acceptance Criteria\n- OAuth works" | bun run src/cli.ts new "Wire up OAuth" --body -
+tasks new "Wire up OAuth flow"
+tasks new "Ship release notes" --unattended --effort low --deps 3 --deps 5
+echo "## Acceptance Criteria\n- OAuth works" | tasks new "Wire up OAuth" --body -
 ```
 
 ### `tasks show <id|uuid> [--json] [--no-color]`
@@ -115,8 +118,8 @@ Move a task. Same-column is a no-op (exit 0, no commit). Bumps `updated_at`. Unk
 Open the task file in `$EDITOR`, validate on save, commit. Title change recomputes the slug and performs the content update plus `git mv` in one atomic commit. Invalid saves are rejected with the relevant validator code (`INVALID_TITLE`, `MISSING_FIELD`, `UNKNOWN_UUID`, `CYCLE_DETECTED`, ...) and the bad file is preserved so you can re-run `tasks edit` to fix it.
 
 ```sh
-EDITOR=vim bun run src/cli.ts edit 1
-bun run src/cli.ts edit --abort   # discard pending edits, reset working tree to HEAD
+EDITOR=vim tasks edit 1
+tasks edit --abort   # discard pending edits, reset working tree to HEAD
 ```
 
 This command is exempt from the dirty-tree guard so it can serve as the recovery path.
