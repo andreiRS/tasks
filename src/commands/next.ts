@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { findAllTasks, resolveStoreDir, type TaskData } from "../store.ts";
+import { findAllTasks, findArchivedTasks, resolveStoreDir, type TaskData } from "../store.ts";
 import { renderTask } from "../render.ts";
 import { writeJsonError, writePlainError } from "../cli/errors.ts";
 import { shouldColor } from "../cli/color.ts";
@@ -44,14 +44,18 @@ export async function run(rest: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const allTasks = findAllTasks(dir);
-  const doneUuids = new Set(
-    allTasks.filter((t) => t.column === "done").map((t) => t.uuid)
-  );
+  const liveTasks = findAllTasks(dir);
+  const archivedTasks = findArchivedTasks(dir);
+  const allTasks = [...liveTasks, ...archivedTasks];
+  // Archived tasks count as Complete for blocking purposes (see ADR-0010).
+  const completeUuids = new Set([
+    ...liveTasks.filter((t) => t.column === "done").map((t) => t.uuid),
+    ...archivedTasks.map((t) => t.uuid),
+  ]);
 
-  let candidates = allTasks.filter((t) => {
+  let candidates = liveTasks.filter((t) => {
     if (t.column !== "ready") return false;
-    return t.deps.every((depUuid) => doneUuids.has(depUuid));
+    return t.deps.every((depUuid) => completeUuids.has(depUuid));
   });
 
   if (effectiveAttendance !== undefined) {

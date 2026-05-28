@@ -1,4 +1,4 @@
-import { findAllTasks, findTask, resolveStoreDir, type TaskData } from "../store.ts";
+import { findAllTasks, findArchivedTasks, findTask, resolveStoreDir, type TaskData } from "../store.ts";
 import { renderTask } from "../render.ts";
 import { writeJsonError, writePlainError } from "../cli/errors.ts";
 import { shouldColor } from "../cli/color.ts";
@@ -30,7 +30,9 @@ export async function run(rest: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const allTasks = findAllTasks(dir);
+  // Include archived tasks so deps to retired blockers resolve to "#id title"
+  // instead of "<unknown>". Archived tasks count as Complete (ADR-0010).
+  const allTasks = [...findAllTasks(dir), ...findArchivedTasks(dir)];
   const byUuid = new Map<string, TaskData>(allTasks.map((t) => [t.uuid, t]));
   const deps_out = task.deps
     .map((u) => byUuid.get(u))

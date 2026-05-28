@@ -619,6 +619,51 @@ export function findAllTasks(dir: string): TaskData[] {
 }
 
 /**
+ * Return all tasks currently in the `archive/` sibling directory.
+ *
+ * Same parsing rules as `findAllTasks`, but the resulting TaskData carries
+ * `column: "archive"` so callers can filter or treat them specially.
+ * Returns an empty array if the store or archive/ directory does not exist.
+ * Does NOT auto-initialize the store.
+ */
+export function findArchivedTasks(dir: string): TaskData[] {
+  const archiveDir = join(dir, ARCHIVE_DIR);
+  if (!existsSync(archiveDir)) return [];
+
+  const results: TaskData[] = [];
+  let files: string[];
+  try {
+    files = readdirSync(archiveDir).filter((f) => f.endsWith(".md")).sort();
+  } catch {
+    return [];
+  }
+
+  for (const filename of files) {
+    let raw: string;
+    try {
+      raw = readFileSync(join(archiveDir, filename), "utf-8");
+    } catch {
+      continue;
+    }
+    const { fm, body } = parseTaskFile(raw);
+    if (typeof fm.id !== "number") continue;
+    results.push({
+      id: fm.id as number,
+      uuid: fm.uuid as string,
+      title: fm.title as string,
+      column: ARCHIVE_DIR,
+      created_at: fm.created_at as string,
+      updated_at: fm.updated_at as string,
+      body,
+      deps: Array.isArray(fm.deps) ? (fm.deps as string[]) : [],
+      attendance: resolveAttendance(fm.attendance) ?? DEFAULT_ATTENDANCE,
+      effort: resolveEffort(fm.effort) ?? DEFAULT_EFFORT,
+    });
+  }
+  return results;
+}
+
+/**
  * Group an array of tasks by column into a Record with all six column keys.
  * Each key is always present (empty array if no tasks in that column).
  */
