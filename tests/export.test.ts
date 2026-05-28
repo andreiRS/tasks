@@ -223,7 +223,7 @@ test("tasks export --json: archived task referenced as a live dep appears as a s
 
 // ─── Slice 6: --include-archived includes full archive, no duplicates ────────
 
-test.skip("tasks export --json --include-archived: full archive group with bodies, no duplicate stubs", async () => {
+test("tasks export --json --include-archived: full archive group with bodies, no duplicate stubs", async () => {
   await runTasks(["new", "blocker old"]);
   await runTasks(["new", "dependent"]);
   await runTasks(["link", "2", "--depends-on", "1"]);

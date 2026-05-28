@@ -77,8 +77,21 @@ function toLiveExport(task: TaskData): ExportedLiveTask {
   };
 }
 
+interface ExportedArchivedTask extends ExportedLiveTask {
+  complete: true;
+}
+
+function toArchiveFullExport(task: TaskData): ExportedArchivedTask {
+  return {
+    ...toLiveExport(task),
+    column: "archive",
+    complete: true,
+  };
+}
+
 export async function run(rest: string[]): Promise<void> {
   const jsonFlag = rest.includes("--json");
+  const includeArchived = rest.includes("--include-archived");
 
   if (!jsonFlag) {
     writePlainError("MISSING_FIELD: tasks export requires --json");
@@ -116,27 +129,42 @@ export async function run(rest: string[]): Promise<void> {
     ordered.push(...grouped[col]);
   }
 
-  const tasksOut: Array<ExportedLiveTask | ArchiveStub> = ordered.map(toLiveExport);
+  const tasksOut: Array<ExportedLiveTask | ArchiveStub | ExportedArchivedTask> =
+    ordered.map(toLiveExport);
 
-  // Archive Stubs: for any Archived Task that is referenced as a Dep by a
-  // live Task, emit a minimal record after the live tasks so the Dep graph
-  // is never dangling. The full Archive is excluded by default.
+  // Archive section. Default: only emit stubs for archived tasks referenced
+  // as a Dep by a live Task (keeps the Dep graph intact without dragging the
+  // archive into the payload). With `--include-archived`, emit the full
+  // archive group with bodies + AC; stubs are NOT also emitted, so each
+  // archived uuid appears at most once.
   const archivedTasks = findArchivedTasks(dir);
-  const archivedByUuid = new Map(archivedTasks.map((t) => [t.uuid, t]));
-  const referencedArchivedUuids = new Set<string>();
-  for (const t of ordered) {
-    for (const depUuid of t.deps) {
-      if (archivedByUuid.has(depUuid)) {
-        referencedArchivedUuids.add(depUuid);
+  if (includeArchived) {
+    const sortedArchive = [...archivedTasks].sort((a, b) => {
+      const ta = new Date(a.created_at).getTime();
+      const tb = new Date(b.created_at).getTime();
+      if (ta !== tb) return ta - tb;
+      return a.id - b.id;
+    });
+    for (const t of sortedArchive) {
+      tasksOut.push(toArchiveFullExport(t));
+    }
+  } else {
+    const archivedByUuid = new Map(archivedTasks.map((t) => [t.uuid, t]));
+    const referencedArchivedUuids = new Set<string>();
+    for (const t of ordered) {
+      for (const depUuid of t.deps) {
+        if (archivedByUuid.has(depUuid)) {
+          referencedArchivedUuids.add(depUuid);
+        }
       }
     }
-  }
-  if (referencedArchivedUuids.size > 0) {
-    const stubs = archivedTasks
-      .filter((t) => referencedArchivedUuids.has(t.uuid))
-      .sort((a, b) => a.id - b.id)
-      .map(toArchiveStub);
-    tasksOut.push(...stubs);
+    if (referencedArchivedUuids.size > 0) {
+      const stubs = archivedTasks
+        .filter((t) => referencedArchivedUuids.has(t.uuid))
+        .sort((a, b) => a.id - b.id)
+        .map(toArchiveStub);
+      tasksOut.push(...stubs);
+    }
   }
 
   // Reverse-dep index: for every live task with deps [B, C], record this
