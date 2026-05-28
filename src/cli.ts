@@ -13,6 +13,7 @@ import { run as setCmd } from "./commands/set.ts";
 import { run as nextCmd } from "./commands/next.ts";
 import { run as initCmd } from "./commands/init.ts";
 import { run as undoCmd } from "./commands/undo.ts";
+import { run as doctorCmd } from "./commands/doctor.ts";
 
 const COMMANDS: Record<string, (rest: string[]) => Promise<void>> = {
   new: newCmd,
@@ -28,6 +29,7 @@ const COMMANDS: Record<string, (rest: string[]) => Promise<void>> = {
   next: nextCmd,
   init: initCmd,
   undo: undoCmd,
+  doctor: doctorCmd,
 };
 
 const [command, ...rest] = process.argv.slice(2);

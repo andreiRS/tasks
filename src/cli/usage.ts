@@ -28,6 +28,7 @@ Commands:
                           Print the oldest ready task whose deps are all done.
   init [--json]           Create the per-project store (idempotent).
   undo [--json]           Revert the most recent store commit.
+  doctor                  Report store path, git status, and stash count.
   help                    Show this message.
 
 Global flags:
