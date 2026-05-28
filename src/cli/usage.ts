@@ -7,8 +7,10 @@ Commands:
   show <id|uuid> [--json] [--no-color]
                           Print a task with its dependency edges.
   list [--column <col>]... [--attendance <attended|unattended>]
-       [--effort <low|medium|high>] [--all] [--since <Nd>] [--json] [--no-color]
-                          List tasks (done items older than 7d hidden by default).
+       [--effort <low|medium|high>] [--all] [--since <Nd>] [--archived]
+       [--json] [--no-color]
+                          List tasks (done items older than 7d hidden by default;
+                          --archived shows only archive/).
   board [--all] [--since <Nd>] [--json] [--no-color]
                           Render the kanban board grouped by column.
   mv <id|uuid> <column> [--json]

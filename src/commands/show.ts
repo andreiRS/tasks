@@ -19,7 +19,14 @@ export async function run(rest: string[]): Promise<void> {
   }
 
   const dir = resolveStoreDir(process.cwd());
-  const task = findTask(dir, idOrUuid);
+  // Fall back to archive/ so retired tasks remain inspectable. mv/rm intentionally
+  // do NOT see archived tasks (archive is one-way; ADR-0010).
+  const byShortId = /^\d+$/.test(idOrUuid);
+  const targetId = byShortId ? parseInt(idOrUuid, 10) : null;
+  const task =
+    findTask(dir, idOrUuid) ??
+    findArchivedTasks(dir).find((t) => (byShortId ? t.id === targetId : t.uuid === idOrUuid)) ??
+    null;
 
   if (!task) {
     if (jsonFlag) {

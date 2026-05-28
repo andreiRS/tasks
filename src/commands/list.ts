@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { COLUMNS, findAllTasks, resolveStoreDir } from "../store.ts";
+import { COLUMNS, findAllTasks, findArchivedTasks, resolveStoreDir } from "../store.ts";
 import { renderList, computeBlockedBy } from "../render.ts";
 import { writeJsonError, writePlainError } from "../cli/errors.ts";
 import { shouldColor } from "../cli/color.ts";
@@ -14,6 +14,7 @@ export async function run(rest: string[]): Promise<void> {
   const jsonFlag = rest.includes("--json");
   const noColorFlag = rest.includes("--no-color");
   const allFlag = rest.includes("--all");
+  const archivedFlag = rest.includes("--archived");
 
   let sinceDays = 7;
   const sinceVal = getFlagValue(rest, "--since");
@@ -66,9 +67,14 @@ export async function run(rest: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const allTasks = findAllTasks(dir);
-  const blockedBy = computeBlockedBy(allTasks);
-  let tasks = applyDoneCutoff(allTasks, allFlag, sinceDays);
+  const liveTasks = findAllTasks(dir);
+  const archivedTasks = findArchivedTasks(dir);
+  // computeBlockedBy needs both so that an archived dep does not show as a
+  // blocker on a live task; the dangling-vs-complete distinction matters.
+  const blockedBy = computeBlockedBy([...liveTasks, ...archivedTasks]);
+  let tasks = archivedFlag
+    ? archivedTasks
+    : applyDoneCutoff(liveTasks, allFlag, sinceDays);
 
   if (columnFilters.length > 0) {
     tasks = tasks.filter((t) => columnFilters.includes(t.column));

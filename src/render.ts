@@ -49,7 +49,8 @@ export function computeBlockedBy(tasks: TaskData[]): Map<string, number[]> {
     for (const depUuid of t.deps) {
       const dep = byUuid.get(depUuid);
       if (!dep) continue; // dangling dep is not surfaced here
-      if (dep.column === "done") continue;
+      // Archived tasks count as Complete (ADR-0010), same as done.
+      if (dep.column === "done" || dep.column === "archive") continue;
       ids.push(dep.id);
     }
     ids.sort((a, b) => a - b);

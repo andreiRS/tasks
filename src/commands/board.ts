@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { findAllTasks, groupTasksByColumn, resolveStoreDir, type TaskData } from "../store.ts";
+import { findAllTasks, findArchivedTasks, groupTasksByColumn, resolveStoreDir, type TaskData } from "../store.ts";
 import { renderBoard, computeBlockedBy } from "../render.ts";
 import { writeJsonError, writePlainError } from "../cli/errors.ts";
 import { shouldColor } from "../cli/color.ts";
@@ -40,9 +40,12 @@ export async function run(rest: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const allTasks = findAllTasks(dir);
-  const blockedBy = computeBlockedBy(allTasks);
-  const tasks = applyDoneCutoff(allTasks, allFlag, sinceDays);
+  const liveTasks = findAllTasks(dir);
+  const archivedTasks = findArchivedTasks(dir);
+  // Archived tasks feed blocker resolution but never the rendered grouping
+  // (archive is not a Column). See ADR-0010.
+  const blockedBy = computeBlockedBy([...liveTasks, ...archivedTasks]);
+  const tasks = applyDoneCutoff(liveTasks, allFlag, sinceDays);
 
   const grouped = groupTasksByColumn(tasks);
 
