@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
-import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, editTask, abortPendingEdits, linkTask, unlinkTask, TasksError, COLUMNS } from "./store.ts";
+import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, editTask, abortPendingEdits, linkTask, unlinkTask, TasksError, COLUMNS, type TaskData } from "./store.ts";
 import { renderTask, renderList, renderBoard } from "./render.ts";
 
 /**
@@ -161,10 +161,25 @@ if (command === "new") {
     process.exit(1);
   }
 
+  // Compute forward and reverse dependency edges across the store.
+  // deps_out: in the task's `deps` order. Tasks that don't resolve are skipped
+  //   silently (validator catches UNKNOWN_UUID on mutations; defensive here).
+  // deps_in: tasks whose `deps` contain this task's uuid, sorted by short id asc.
+  const allTasks = findAllTasks(dir);
+  const byUuid = new Map<string, TaskData>(allTasks.map((t) => [t.uuid, t]));
+  const deps_out = task.deps
+    .map((u) => byUuid.get(u))
+    .filter((t): t is TaskData => t !== undefined)
+    .map((t) => ({ uuid: t.uuid, id: t.id, title: t.title }));
+  const deps_in = allTasks
+    .filter((t) => t.deps.includes(task.uuid))
+    .sort((a, b) => a.id - b.id)
+    .map((t) => ({ uuid: t.uuid, id: t.id, title: t.title }));
+
   if (jsonFlag) {
-    process.stdout.write(JSON.stringify(task) + "\n");
+    process.stdout.write(JSON.stringify({ ...task, deps_out, deps_in }) + "\n");
   } else {
-    process.stdout.write(renderTask(task, { color: shouldColor() }));
+    process.stdout.write(renderTask(task, { color: shouldColor(), deps_out, deps_in }));
   }
 } else if (command === "list") {
   const jsonFlag = rest.includes("--json");

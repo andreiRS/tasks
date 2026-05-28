@@ -9,6 +9,10 @@ import { COLUMNS } from "./store.ts";
  */
 export interface RenderOptions {
   color?: boolean;
+  /** Resolved forward dependency edges (what this task depends on). */
+  deps_out?: Array<{ uuid: string; id: number; title: string }>;
+  /** Resolved reverse dependency edges (what depends on this task). */
+  deps_in?: Array<{ uuid: string; id: number; title: string }>;
 }
 
 // Minimal ANSI palette. Hand-rolled, no third-party color library.
@@ -139,6 +143,25 @@ export function renderTask(task: TaskData, options: RenderOptions = {}): string 
 
   if (task.body.length > 0) {
     lines.push(task.body);
+  }
+
+  // Dependency sections (only when non-empty). Header is bold (like board
+  // column headers); each entry is indented two spaces as `  #<id> <title>`.
+  const depsOut = options.deps_out ?? [];
+  const depsIn = options.deps_in ?? [];
+  if (depsOut.length > 0) {
+    lines.push(style("Depends on:", ANSI.bold, color));
+    for (const d of depsOut) {
+      const id = style(`#${d.id}`, ANSI.bold, color);
+      lines.push(`  ${id} ${d.title}`);
+    }
+  }
+  if (depsIn.length > 0) {
+    lines.push(style("Blocks:", ANSI.bold, color));
+    for (const d of depsIn) {
+      const id = style(`#${d.id}`, ANSI.bold, color);
+      lines.push(`  ${id} ${d.title}`);
+    }
   }
 
   // Always end with a single trailing newline.
