@@ -367,6 +367,20 @@ if (command === "new") {
     }
   }
 
+  // Parse --attendance <value> (single value, omit for no filter).
+  let attendanceFilter: string | undefined;
+  const attendanceIdx = rest.indexOf("--attendance");
+  if (attendanceIdx !== -1 && attendanceIdx + 1 < rest.length) {
+    attendanceFilter = rest[attendanceIdx + 1];
+  }
+
+  // Parse --effort <value> (single value, omit for no filter).
+  let effortFilter: string | undefined;
+  const effortIdx = rest.indexOf("--effort");
+  if (effortIdx !== -1 && effortIdx + 1 < rest.length) {
+    effortFilter = rest[effortIdx + 1];
+  }
+
   // Validate column names before touching the store.
   for (const col of columnFilters) {
     if (!COLUMNS.includes(col)) {
@@ -375,6 +389,34 @@ if (command === "new") {
         writeJsonError("UNKNOWN_COLUMN", msg, { column: col, valid: COLUMNS });
       } else {
         writePlainError(`UNKNOWN_COLUMN: ${msg}`);
+      }
+      process.exit(1);
+    }
+  }
+
+  // Validate --attendance enum value before touching the store.
+  if (attendanceFilter !== undefined) {
+    const validAttendance = ["attended", "unattended"];
+    if (!validAttendance.includes(attendanceFilter)) {
+      const msg = `invalid --attendance value: ${attendanceFilter}. Allowed: ${validAttendance.join(", ")}`;
+      if (jsonFlag) {
+        writeJsonError("INVALID_ATTENDANCE", msg, { value: attendanceFilter, allowed: validAttendance });
+      } else {
+        writePlainError(`INVALID_ATTENDANCE: ${msg}`);
+      }
+      process.exit(1);
+    }
+  }
+
+  // Validate --effort enum value before touching the store.
+  if (effortFilter !== undefined) {
+    const validEffort = ["low", "medium", "high"];
+    if (!validEffort.includes(effortFilter)) {
+      const msg = `invalid --effort value: ${effortFilter}. Allowed: ${validEffort.join(", ")}`;
+      if (jsonFlag) {
+        writeJsonError("INVALID_EFFORT", msg, { value: effortFilter, allowed: validEffort });
+      } else {
+        writePlainError(`INVALID_EFFORT: ${msg}`);
       }
       process.exit(1);
     }
@@ -401,6 +443,16 @@ if (command === "new") {
   // Apply column filter when one or more --column flags were given.
   if (columnFilters.length > 0) {
     tasks = tasks.filter((t) => columnFilters.includes(t.column));
+  }
+
+  // Apply --attendance filter (AND with any existing filters).
+  if (attendanceFilter !== undefined) {
+    tasks = tasks.filter((t) => t.attendance === attendanceFilter);
+  }
+
+  // Apply --effort filter (AND with any existing filters).
+  if (effortFilter !== undefined) {
+    tasks = tasks.filter((t) => t.effort === effortFilter);
   }
 
   if (jsonFlag) {
