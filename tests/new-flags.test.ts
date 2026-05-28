@@ -115,19 +115,6 @@ function readTaskBodyByFilename(col: string, filename: string): string {
   return rawBody.startsWith("\n") ? rawBody.slice(1) : rawBody;
 }
 
-function makeReplaceEditor(replacementContent: string, tag: string = "ed"): string {
-  const replacementPath = join(editorScriptDir, `${tag}-content.txt`);
-  writeFileSync(replacementPath, replacementContent, "utf-8");
-  const scriptPath = join(editorScriptDir, `${tag}-editor.sh`);
-  writeFileSync(
-    scriptPath,
-    `#!/bin/sh\ncp "${replacementPath}" "$1"\n`,
-    "utf-8",
-  );
-  chmodSync(scriptPath, 0o755);
-  return scriptPath;
-}
-
 // ─── --unattended ────────────────────────────────────────────────────────────
 
 test("tasks new --unattended writes attendance=unattended to disk", async () => {
