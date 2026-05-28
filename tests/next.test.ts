@@ -1,8 +1,7 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { realpathSync } from "node:fs";
 
 let tasksHome: string;
 let cwdDir: string;
@@ -34,12 +33,6 @@ async function runTasks(
     new Response(proc.stderr).text(),
   ]);
   return { exitCode, stdout, stderr };
-}
-
-function getStoreDir(): string {
-  const real = realpathSync(cwdDir);
-  const encoded = real.replace(/-/g, "--").replace(/\//g, "-");
-  return join(tasksHome, "projects", encoded);
 }
 
 async function plantTask(title: string): Promise<{ id: number; uuid: string }> {
