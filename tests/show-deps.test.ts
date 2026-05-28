@@ -231,3 +231,24 @@ test("show --json: schema is unchanged when deps are present (has deps array wit
   expect(Array.isArray(parsed.deps)).toBe(true);
   expect((parsed.deps as string[])[0]).toBe(b.uuid);
 });
+
+// ─── Test 11: done dependant still appears in blocks: ────────────────────────
+
+test("show (human): done dependant still appears in Blocks: block", async () => {
+  const a = await plantTask("task A");
+  const b = await plantTask("task B");
+
+  // A depends on B
+  const lr = await runTasks(["link", String(a.id), "--depends-on", String(b.id)]);
+  expect(lr.exitCode).toBe(0);
+
+  // Move A to done
+  const mvr = await runTasks(["mv", String(a.id), "done"]);
+  expect(mvr.exitCode).toBe(0);
+
+  // B should still show A in its Blocks: section even though A is done
+  const { exitCode, stdout } = await runTasks(["show", String(b.id), "--no-color"]);
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain("Blocks:");
+  expect(stdout).toContain(`  #${a.id} task A`);
+});
