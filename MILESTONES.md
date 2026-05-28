@@ -16,7 +16,7 @@ flowchart LR
     M7b["M7b Link, unlink, blockers<br/>4 / 4"]:::done
     M8["M8 Agent collaboration<br/>5 / 5"]:::done
     M9["M9 Undo<br/>1 / 1"]:::done
-    M10["M10 Ship<br/>0 / 0 (polish)"]:::todo
+    M10["M10 Ship<br/>0 / 0 (polish)"]:::done
 
     M1 --> M2 --> M3 --> M4
     M1 --> M5
