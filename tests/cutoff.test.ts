@@ -93,9 +93,12 @@ async function gitAdd(storeDir: string): Promise<void> {
   await git(["commit", "-m", "seed tasks"]);
 }
 
-// Today is 2026-05-27. Tasks updated 8+ days ago should be hidden by default.
-const RECENT_DATE = "2026-05-25T10:00:00.000Z"; // 2 days ago — within 7-day window
-const OLD_DATE = "2026-05-01T10:00:00.000Z";    // 26 days ago — outside 7-day window
+// Timestamps computed relative to now so tests stay valid indefinitely.
+const RECENT_DATE = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();   // 2 days ago -- within 7-day window
+const OLD_DATE = new Date(Date.now() - 26 * 24 * 60 * 60 * 1000).toISOString();     // 26 days ago -- outside 7-day window, inside 30-day window
+const VERY_RECENT_DATE = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();   // 1 hour ago -- within 1-day window
+const ANCIENT_DATE = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(); // 90 days ago -- outside 30-day window
+const TODAY_DATE = new Date(Date.now() - 30 * 60 * 1000).toISOString();             // 30 minutes ago -- "today", used with --since 0d
 
 // ─── Default 7-day cutoff: list ──────────────────────────────────────────────
 
@@ -172,7 +175,7 @@ test("tasks list --since 30d shows done tasks within 30 days (--json)", async ()
   // OLD_DATE is 26 days ago — within 30d window
   plantTask(storeDir, "done", 1, "old done task", OLD_DATE);
   // Very old: more than 30 days ago
-  plantTask(storeDir, "done", 2, "ancient done task", "2026-03-01T00:00:00.000Z");
+  plantTask(storeDir, "done", 2, "ancient done task", ANCIENT_DATE);
   await gitAdd(storeDir);
 
   const { exitCode, stdout } = await runTasks(["list", "--since", "30d", "--json"]);
@@ -188,7 +191,7 @@ test("tasks list --since 1d hides done tasks older than 1 day (--json)", async (
   const storeDir = deriveStorePath(tasksHome, cwdDir);
   await initBareStore(storeDir);
   plantTask(storeDir, "done", 1, "two day old task", RECENT_DATE); // 2 days old
-  plantTask(storeDir, "done", 2, "very recent task", "2026-05-27T08:00:00.000Z"); // today
+  plantTask(storeDir, "done", 2, "very recent task", VERY_RECENT_DATE); // 1 hour ago -- within 1-day window
   await gitAdd(storeDir);
 
   const { exitCode, stdout } = await runTasks(["list", "--since", "1d", "--json"]);
@@ -230,7 +233,7 @@ test("tasks list: non-done columns are never filtered by cutoff (--json)", async
 test("tasks list --since 0d hides all done tasks (cutoff value of 0) (--json)", async () => {
   const storeDir = deriveStorePath(tasksHome, cwdDir);
   await initBareStore(storeDir);
-  plantTask(storeDir, "done", 1, "done task today", "2026-05-27T00:00:00.000Z");
+  plantTask(storeDir, "done", 1, "done task today", TODAY_DATE);
   plantTask(storeDir, "backlog", 2, "backlog task", OLD_DATE);
   await gitAdd(storeDir);
 
@@ -338,7 +341,7 @@ test("tasks board --since 30d shows done tasks within 30 days (--json)", async (
   const storeDir = deriveStorePath(tasksHome, cwdDir);
   await initBareStore(storeDir);
   plantTask(storeDir, "done", 1, "old done task", OLD_DATE); // 26 days ago
-  plantTask(storeDir, "done", 2, "ancient done task", "2026-03-01T00:00:00.000Z");
+  plantTask(storeDir, "done", 2, "ancient done task", ANCIENT_DATE);
   await gitAdd(storeDir);
 
   const { exitCode, stdout } = await runTasks(["board", "--since", "30d", "--json"]);
