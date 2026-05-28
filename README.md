@@ -2,7 +2,7 @@
 
 A git-backed, file-per-task CLI for tracking work across six columns, designed so humans and Claude Code agents drive the same surface. Each task is a markdown file with YAML frontmatter, kept in a per-project git repository under `$TASKS_HOME`. Every mutation is an atomic commit, so the history is the audit log.
 
-> **Status:** M1–M7b and most of M8 are implemented. The store, validator (schema + DAG rules), all read commands (`show`, `list`, `board`, `next`), and all write commands except `undo` and explicit `init` are live. See [MILESTONES.md](./MILESTONES.md) for the full delivery plan and per-milestone status.
+> **Status:** M1 through M9 are complete. M10 (Ship polish pass) is in progress. The store, validator (schema + DAG rules), all read commands (`show`, `list`, `board`, `next`), and all write commands (`init`, `new`, `mv`, `edit`, `set`, `link`, `unlink`, `rm`, `undo`) are live. See [MILESTONES.md](./MILESTONES.md) for the full delivery plan and per-milestone status.
 
 ## Why
 
@@ -143,6 +143,14 @@ Remove dep edges. Same multi-arg / single-commit semantics.
 
 Delete a task. If any task depends on this one, the command refuses with `DEP_EXISTS`. `--force` deletes and strips dangling references from every dependent in the same atomic commit, printing `affected: #<id> <title>` lines to stderr so the cascade is never invisible.
 
+### `tasks init [--json]`
+
+Explicit store creation. Idempotent -- running it a second time is safe and exits 0. Accepts `--json` (returns `{ ok: true, path, created }` where `created` is `true` on first run, `false` on re-run). Note that all mutating commands auto-init silently -- `init` is the explicit escape hatch for scripts that want to ensure the store exists before any tasks are created.
+
+### `tasks undo [--json]`
+
+Reverts HEAD via `git revert --no-edit`, which produces a new commit (no history rewrite). Refuses with `NOTHING_TO_UNDO` on the initial seed commit. Returns `{ ok: true, reverted, revert }` under `--json`, where `reverted` is the SHA that was reverted and `revert` is the new revert commit SHA. `tasks undo` itself is reversible by running it again.
+
 ### `tasks next [flags]`
 
 Print the oldest task in `ready/` whose deps are all in `done/`.
@@ -171,7 +179,29 @@ With `--json`, errors come back as:
 
 Without `--json`, errors are plain text on stderr. Either way the exit code is non-zero.
 
-Codes used so far: `NOT_FOUND`, `INVALID_TITLE`, `INVALID_COLUMN`, `INVALID_ATTENDANCE`, `INVALID_EFFORT`, `INVALID_SINCE`, `STORE_DIRTY`, `FLOCK_MISSING`, `NOT_INITIALIZED`, `MISSING_FIELD`, `NO_EDITOR`, `EDITOR_FAILED`, `UNKNOWN_UUID`, `CYCLE_DETECTED`, `DEP_EXISTS`, `SELF_LINK`, `NO_READY_TASK`. `NOTHING_TO_UNDO` lands with M9.
+Codes: `CONFLICT`, `CYCLE_DETECTED`, `DEP_EXISTS`, `EDITOR_FAILED`, `FLOCK_MISSING`, `GIT_ERROR`, `INVALID_ATTENDANCE`, `INVALID_COLUMN`, `INVALID_EFFORT`, `INVALID_SINCE`, `INVALID_TITLE`, `MISSING_FIELD`, `NO_EDITOR`, `NO_READY_TASK`, `NOT_FOUND`, `NOT_INITIALIZED`, `NOTHING_TO_UNDO`, `SELF_LINK`, `STORE_DIRTY`, `UNDO_FAILED`, `UNKNOWN_UUID`.
+
+`CONFLICT` is emitted when `--edit` and `--body -` are used together on `new`, or when `--unattended` and `--attendance attended` are combined on `next`. `UNDO_FAILED` is emitted by `undo` when `git revert` exits with a conflict.
+
+## JSON output
+
+All read commands (`show`, `list`, `board`, `next`) and all mutating commands (`init`, `new`, `mv`, `edit`, `set`, `link`, `unlink`, `rm`, `undo`) accept `--json`. Errors always use the envelope above. Success shapes per command:
+
+| Command | Success shape |
+|---------|--------------|
+| `show` | Full task object with parsed `acceptance_criteria` |
+| `list` | Array of task objects |
+| `board` | `{ backlog: [...], ready: [...], doing: [...], blocked: [...], review: [...], done: [...] }` |
+| `next` | Single task object, or non-zero + `NO_READY_TASK` if none |
+| `init` | `{ ok: true, path, created }` (`created: true` on first run) |
+| `new` | Plain text `task: new #id - title` (errors use JSON envelope) |
+| `mv` | `{ ok: true, id, uuid, from, to }` |
+| `edit` | `{ ok: true, id, uuid, changed }` |
+| `set` | `{ ok: true, id, uuid, changed }` |
+| `link` | `{ ok: true, id, uuid, added }` |
+| `unlink` | `{ ok: true, id, uuid, removed }` |
+| `rm` | `{ ok: true, id, uuid, forced, cascaded }` |
+| `undo` | `{ ok: true, reverted, revert }` |
 
 ## Tests
 
