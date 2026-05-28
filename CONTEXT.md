@@ -53,6 +53,10 @@ _Avoid_: blocker, blocking, dependent (overloaded with the noun "dependent" mean
 A Dependency is satisfied only when the depended-on Task is in `done`. `review` does not count.
 _Avoid_: finished, closed, resolved.
 
+**Unresolved Blocker**:
+A declared Dependency whose depended-on Task is not yet in `done`. A Task has unresolved blockers when at least one entry in its `deps` list points to a Task in any Column other than `done`. The `list` and `board` commands surface unresolved blockers as a `[blocked by #N,#M]` marker; `tasks next` hard-filters them out.
+_Avoid_: open blocker, active dep, incomplete dep.
+
 **Short ID**:
 A small positive integer scoped to a single Store, monotonically increasing and never reused. Allocated from `meta.yaml`'s `next_id`. For humans typing on the CLI.
 _Avoid_: number, index, ID (ambiguous with UUID).
