@@ -101,7 +101,7 @@ test("renderTask lists deps as UUIDs when present and reflects flags", () => {
   expect(out.endsWith("\n")).toBe(true);
 });
 
-// ─── Test 3: CLI E2E — tasks show <id> without --json renders via renderTask ─
+// ─── Test 3: CLI E2E: tasks show <id> without --json renders via renderTask ─
 
 test("tasks show <id> without --json prints the renderTask output", async () => {
   // Seed a task
@@ -120,7 +120,7 @@ test("tasks show <id> without --json prints the renderTask output", async () => 
   const expected = renderTask(task);
   expect(stdout).toBe(expected);
 
-  // Sanity: the output is non-trivial — title header line AND metadata block
+  // Sanity: the output is non-trivial; title header line AND metadata block
   expect(stdout).toContain("#1 hello world");
   expect(stdout).toContain("uuid:");
   expect(stdout).toContain("column:        backlog");

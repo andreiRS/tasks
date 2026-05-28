@@ -46,7 +46,7 @@ async function plantTask(title: string): Promise<{ id: number; uuid: string }> {
   return { id, uuid: parsed.uuid };
 }
 
-// ─── Test 1: JSON — task with no deps has empty arrays ───────────────────────
+// ─── Test 1: JSON: task with no deps has empty arrays ───────────────────────
 
 test("show --json: task with no deps has empty deps_out and deps_in arrays", async () => {
   await plantTask("solo task");
@@ -104,7 +104,7 @@ test("show --json: deps_in lists reverse edges sorted by short id ascending", as
   expect(parsed.deps_in[1]).toEqual({ uuid: b.uuid, id: b.id, title: "task B" });
 });
 
-// ─── Test 4: Human mode — Depends on section ──────────────────────────────────
+// ─── Test 4: Human mode: Depends on section ──────────────────────────────────
 
 test("show (human): A depending on B renders 'Depends on:' block with '#<id> <title>'", async () => {
   const a = await plantTask("task A");
@@ -121,7 +121,7 @@ test("show (human): A depending on B renders 'Depends on:' block with '#<id> <ti
   expect(stdout).not.toContain("Blocks:");
 });
 
-// ─── Test 5: Human mode — Blocks section ──────────────────────────────────────
+// ─── Test 5: Human mode: Blocks section ──────────────────────────────────────
 
 test("show (human): C with A,B depending on it renders 'Blocks:' block", async () => {
   const a = await plantTask("task A");
@@ -141,7 +141,7 @@ test("show (human): C with A,B depending on it renders 'Blocks:' block", async (
   expect(stdout).not.toContain("Depends on:");
 });
 
-// ─── Test 6: Human mode — neither header when no edges ────────────────────────
+// ─── Test 6: Human mode: neither header when no edges ────────────────────────
 
 test("show (human): task with no edges prints neither 'Depends on:' nor 'Blocks:'", async () => {
   await plantTask("solo task");

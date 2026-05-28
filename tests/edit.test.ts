@@ -351,7 +351,7 @@ test("tasks edit followed by another mutation: editor swap/backup files must not
   const filename = filesInColumn(storeDir, "backlog")[0];
 
   // Editor that modifies the file AND leaves a vim-style swap file behind,
-  // a nano-style backup, and a macOS .DS_Store — all common in real-world use.
+  // a nano-style backup, and a macOS .DS_Store. All common in real-world use.
   const replacementPath = join(editorScriptDir, "stray-content.txt");
   const rawBefore = readTaskFile(storeDir, "backlog", filename);
   const { fm: fmBefore } = parseTask(rawBefore);

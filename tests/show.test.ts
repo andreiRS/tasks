@@ -148,14 +148,14 @@ test("tasks show 999 without --json exits non-zero with plain-text NOT_FOUND on 
   expect(exitCode).not.toBe(0);
   expect(stderr).toContain("NOT_FOUND");
 
-  // Must NOT be a JSON envelope — plain text only
+  // Must NOT be a JSON envelope; plain text only
   expect(() => JSON.parse(stderr)).toThrow();
 });
 
 // ─── Test 5: read command does NOT auto-init ──────────────────────────────────
 
 test("tasks show 1 --json in fresh TASKS_HOME does NOT create the store dir", async () => {
-  // Do NOT seed anything — fresh tasksHome and cwdDir
+  // Do NOT seed anything; fresh tasksHome and cwdDir
 
   const { exitCode } = await runTasks(["show", "1", "--json"]);
 

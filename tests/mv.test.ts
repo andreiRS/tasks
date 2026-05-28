@@ -81,7 +81,7 @@ function findFileInColumn(storeDir: string, col: string): string | null {
   return files.length > 0 ? join(colDir, files[0]) : null;
 }
 
-// ─── Test 1: happy path — move to different column ────────────────────────────
+// ─── Test 1: happy path: move to different column ────────────────────────────
 
 test("tasks mv moves task from backlog to ready: file moves, updated_at advances, single new commit", async () => {
   await plantTask("my task");

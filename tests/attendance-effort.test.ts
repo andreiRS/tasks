@@ -103,7 +103,7 @@ test("legacy task file without attendance/effort surfaces defaults via show --js
   const filePath = join(storeDir, "backlog", files[0]);
   const raw = readFileSync(filePath, "utf-8");
 
-  // Strip any attendance/effort lines if present (defensive — even though the
+  // Strip any attendance/effort lines if present (defensive; even though the
   // green code will have written them, this hand-edits the file back to the
   // legacy shape).
   const stripped = raw

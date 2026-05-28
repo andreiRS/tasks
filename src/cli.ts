@@ -255,7 +255,7 @@ if (command === "new") {
       body: bodyContent,
       runEditor: editorRunner,
     });
-    process.stdout.write(`task: new #${id} — ${title}\n`);
+    process.stdout.write(`task: new #${id}: ${title}\n`);
   } catch (err) {
     if (err instanceof TasksError) {
       if (jsonFlag) {

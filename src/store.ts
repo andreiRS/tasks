@@ -33,7 +33,7 @@ function findProjectRoot(startDir: string): string {
     }
     const parent = dirname(dir);
     if (parent === dir) {
-      // Reached filesystem root with no .git found — fall back to startDir
+      // Reached filesystem root with no .git found; fall back to startDir
       return startDir;
     }
     dir = parent;
@@ -206,7 +206,7 @@ async function upsertGitignore(dir: string): Promise<void> {
  * actionable before any git or filesystem work is attempted.
  *
  * NOTE: Unlike findFlock (which also checks hardcoded locations), this
- * function intentionally respects PATH only — hardcoded fallbacks would
+ * function intentionally respects PATH only; hardcoded fallbacks would
  * silently succeed even when a user hasn't set up their PATH correctly.
  */
 export function findFlockOrFail(): string {
@@ -226,7 +226,7 @@ export function findFlockOrFail(): string {
  *
  * Implementation: spawn `flock -x <lockfile> cat` with stdin piped. flock(1)
  * only execs `cat` AFTER acquiring the lock, so we synchronize by writing a
- * byte to stdin and reading it back from stdout — once we see the echo, `cat`
+ * byte to stdin and reading it back from stdout; once we see the echo, `cat`
  * is running which means the lock is held. When `fn` completes we close stdin,
  * `cat` exits, and flock releases the lock.
  */
@@ -245,7 +245,7 @@ async function withLock<T>(dir: string, fn: () => Promise<T>): Promise<T> {
     stderr: "pipe",
   });
 
-  // Synchronize: write a byte and read it echoed back from `cat` — confirms
+  // Synchronize: write a byte and read it echoed back from `cat`; confirms
   // `cat` is running, which means flock has acquired the lock.
   const sink = lockProc.stdin as unknown as {
     write: (chunk: string | Uint8Array) => number;
@@ -426,7 +426,7 @@ export async function createTask(dir: string, title: string, opts: CreateTaskOpt
     // Stage both files and commit. Exactly one commit per invocation, whether
     // or not the editor ran (and whether or not the editor mutated the file).
     await git(["add", taskRelPath, "meta.yaml"], dir);
-    await git(["commit", "-m", `task: new #${id} — ${title}`], dir);
+    await git(["commit", "-m", `task: new #${id}: ${title}`], dir);
 
     return id;
   });
@@ -826,7 +826,7 @@ export async function removeTask(
       throw new TasksError("GIT_ERROR", `git rm failed`, {});
     }
 
-    await git(["commit", "-m", `task: rm #${task.id} — ${task.title}`], dir);
+    await git(["commit", "-m", `task: rm #${task.id}: ${task.title}`], dir);
 
     return { task, affected: dependents };
   });
@@ -960,7 +960,7 @@ export function titleSlug(title: string): string {
 
 /**
  * `tasks edit --abort`: discard all pending working-tree changes in the store
- * and reset to HEAD. Does NOT acquire the flock — abort is a recovery path.
+ * and reset to HEAD. Does NOT acquire the flock; abort is a recovery path.
  */
 export async function abortPendingEdits(dir: string): Promise<void> {
   if (!existsSync(join(dir, ".git"))) return;
@@ -993,7 +993,7 @@ export async function editTask(
 ): Promise<{ kind: "noop" } | { kind: "committed"; titleChanged: boolean }> {
   return withLock(dir, async () => {
     // Reject if any existing task file (other than the editing one) carries
-    // an invalid enum value. The edit path itself may set new values — those
+    // an invalid enum value. The edit path itself may set new values; those
     // are validated post-save below.
     validateEnums(dir);
 
@@ -1114,7 +1114,7 @@ export async function editTask(
       await git(["add", oldRelPath], dir);
     }
 
-    // Commit ONLY what's staged for this task — leaves any pre-existing dirty
+    // Commit ONLY what's staged for this task; leaves any pre-existing dirty
     // tree alone (PRD: edit is exempt from STORE_DIRTY).
     await git(["commit", "-m", `task: edit #${oldFm.id}`], dir);
 

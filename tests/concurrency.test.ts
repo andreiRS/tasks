@@ -92,5 +92,5 @@ test("lock file is created at <store>/.tasks-lock after a mutation", async () =>
 });
 
 // TODO: assert that read commands (`tasks show`) do not block on the lock.
-// Deferred — needs a clean way to inject a delay into the lock-held critical
+// Deferred; needs a clean way to inject a delay into the lock-held critical
 // section (e.g. an env-var sleep hook).

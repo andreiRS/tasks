@@ -15,7 +15,7 @@
  *   5. If the section is absent, returns the empty string "".
  *
  * Deliberately a small line-scanner state machine tracking a single
- * "inside fence" boolean — not a markdown AST.
+ * "inside fence" boolean; not a markdown AST.
  */
 export function parseAcceptanceCriteria(body: string): string {
   if (!body) return "";

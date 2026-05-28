@@ -172,7 +172,7 @@ test("tasks list --all shows all done tasks regardless of age (human output)", a
 test("tasks list --since 30d shows done tasks within 30 days (--json)", async () => {
   const storeDir = deriveStorePath(tasksHome, cwdDir);
   await initBareStore(storeDir);
-  // OLD_DATE is 26 days ago — within 30d window
+  // OLD_DATE is 26 days ago; within 30d window
   plantTask(storeDir, "done", 1, "old done task", OLD_DATE);
   // Very old: more than 30 days ago
   plantTask(storeDir, "done", 2, "ancient done task", ANCIENT_DATE);
