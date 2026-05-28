@@ -14,7 +14,7 @@ flowchart LR
     M6["M6 Edit &amp; delete<br/>3 / 3"]:::done
     M7a["M7a DAG + rm cascade<br/>4 / 4"]:::done
     M7b["M7b Link, unlink, blockers<br/>4 / 4"]:::done
-    M8["M8 Agent collaboration<br/>5 / 5 (cycle 7 in progress)"]:::wip
+    M8["M8 Agent collaboration<br/>5 / 5"]:::done
     M9["M9 Undo<br/>0 / 1"]:::todo
     M10["M10 Ship<br/>0 / 0 (polish)"]:::todo
 
