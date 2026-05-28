@@ -1,5 +1,4 @@
 import type { TaskData } from "./store.ts";
-import { COLUMNS } from "./store.ts";
 
 /**
  * Options for {@link renderTask}.
