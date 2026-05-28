@@ -13,6 +13,49 @@ export interface RenderOptions {
   deps_out?: Array<{ uuid: string; id: number; title: string }>;
   /** Resolved reverse dependency edges (what depends on this task). */
   deps_in?: Array<{ uuid: string; id: number; title: string }>;
+  /**
+   * Per-task unresolved direct blocker short ids, keyed by task uuid.
+   * When provided and the array for a task is non-empty, a trailing
+   * `[blocked by #N,#M]` marker is appended after the O·M cluster.
+   * Ids in each array are assumed already sorted ascending.
+   */
+  blockedBy?: Map<string, number[]>;
+}
+
+/**
+ * Format the trailing `[blocked by #N,#M]` marker for a task, or an empty
+ * string when the task has no unresolved blockers (or no lookup was provided).
+ */
+function blockedByMarker(task: TaskData, map: Map<string, number[]> | undefined): string {
+  if (!map) return "";
+  const ids = map.get(task.uuid);
+  if (!ids || ids.length === 0) return "";
+  return ` [blocked by ${ids.map((n) => `#${n}`).join(",")}]`;
+}
+
+/**
+ * Compute, per task, the sorted short ids of direct blockers that are not
+ * yet in `done`. Tasks with no unresolved blockers map to an empty array.
+ *
+ * Shared by `list` and `board` so the marker and `blockedBy` JSON field
+ * derive from one source of truth.
+ */
+export function computeBlockedBy(tasks: TaskData[]): Map<string, number[]> {
+  const byUuid = new Map<string, TaskData>();
+  for (const t of tasks) byUuid.set(t.uuid, t);
+  const out = new Map<string, number[]>();
+  for (const t of tasks) {
+    const ids: number[] = [];
+    for (const depUuid of t.deps) {
+      const dep = byUuid.get(depUuid);
+      if (!dep) continue; // dangling dep is not surfaced here
+      if (dep.column === "done") continue;
+      ids.push(dep.id);
+    }
+    ids.sort((a, b) => a - b);
+    out.set(t.uuid, ids);
+  }
+  return out;
 }
 
 // Minimal ANSI palette. Hand-rolled, no third-party color library.
@@ -66,7 +109,8 @@ export function renderList(tasks: TaskData[], options: RenderOptions): string {
     const id = style(`#${task.id}`, ANSI.bold, color);
     const col = style(task.column.padEnd(8, " "), ANSI.cyan, color);
     const g = style(glyphs(task), ANSI.dim, color);
-    lines.push(`${id}  ${col}  ${task.title}  ${g}`);
+    const marker = blockedByMarker(task, options.blockedBy);
+    lines.push(`${id}  ${col}  ${task.title}  ${g}${marker}`);
   }
 
   return lines.join("\n") + "\n";
@@ -98,7 +142,8 @@ export function renderBoard(grouped: Record<string, TaskData[]>, options: Render
       for (const task of tasks) {
         const id = style(`#${task.id}`, ANSI.bold, color);
         const g = style(glyphs(task), ANSI.dim, color);
-        lines.push(`  ${id} ${task.title}  ${g}`);
+        const marker = blockedByMarker(task, options.blockedBy);
+        lines.push(`  ${id} ${task.title}  ${g}${marker}`);
       }
     }
   }
@@ -140,9 +185,14 @@ export function renderTask(task: TaskData, options: RenderOptions = {}): string 
   if (task.deps.length === 0) {
     lines.push(`${label("deps:")}(none)`);
   } else {
-    lines.push(`${label("deps:")}${task.deps[0]}`);
-    for (let i = 1; i < task.deps.length; i++) {
-      lines.push(`${label("")}${task.deps[i]}`);
+    const depsOutMap = new Map((options.deps_out ?? []).map((d) => [d.uuid, d]));
+    const depLines = task.deps.map((u) => {
+      const resolved = depsOutMap.get(u);
+      return resolved ? `#${resolved.id} ${resolved.title}` : `<unknown> ${u}`;
+    });
+    lines.push(`${label("deps:")}${depLines[0]}`);
+    for (let i = 1; i < depLines.length; i++) {
+      lines.push(`${label("")}${depLines[i]}`);
     }
   }
 

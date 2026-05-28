@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { COLUMNS, findAllTasks, resolveStoreDir } from "../store.ts";
-import { renderList } from "../render.ts";
+import { renderList, computeBlockedBy } from "../render.ts";
 import { writeJsonError, writePlainError } from "../cli/errors.ts";
 import { shouldColor } from "../cli/color.ts";
 import { applyDoneCutoff, withAcceptanceCriteria } from "../cli/filters.ts";
@@ -66,8 +66,9 @@ export async function run(rest: string[]): Promise<void> {
     process.exit(1);
   }
 
-  let tasks = findAllTasks(dir);
-  tasks = applyDoneCutoff(tasks, allFlag, sinceDays);
+  const allTasks = findAllTasks(dir);
+  const blockedBy = computeBlockedBy(allTasks);
+  let tasks = applyDoneCutoff(allTasks, allFlag, sinceDays);
 
   if (columnFilters.length > 0) {
     tasks = tasks.filter((t) => columnFilters.includes(t.column));
@@ -80,8 +81,12 @@ export async function run(rest: string[]): Promise<void> {
   }
 
   if (jsonFlag) {
-    process.stdout.write(JSON.stringify(tasks.map(withAcceptanceCriteria)) + "\n");
+    const decorated = tasks.map((t) => ({
+      ...withAcceptanceCriteria(t),
+      blockedBy: blockedBy.get(t.uuid) ?? [],
+    }));
+    process.stdout.write(JSON.stringify(decorated) + "\n");
   } else {
-    process.stdout.write(renderList(tasks, { color: shouldColor(noColorFlag) }));
+    process.stdout.write(renderList(tasks, { color: shouldColor(noColorFlag), blockedBy }));
   }
 }
