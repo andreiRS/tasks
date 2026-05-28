@@ -21,22 +21,27 @@ import { COLUMNS, resolveStoreDir } from "../store.ts";
  * Always exits 0. Does NOT take the flock. Does NOT validate schema.
  * Never deletes files. See ADR-0009 and docs/doctor-clean.md.
  *
- * `--json` is intentionally not handled here; it is a separate slice.
+ * `--json` is opt-in (never auto-switches on non-TTY stdout), mirroring
+ * other read commands. JSON shapes:
+ *   Report:        { store, status: [{ code, path }, ...], stashes }
+ *   Clean (dirty): { store, stashed: true, stash_ref }
+ *   Clean (clean): { store, stashed: false, already_clean: true }
  */
 export async function run(rest: string[]): Promise<void> {
   const clean = rest.includes("--clean");
+  const jsonFlag = rest.includes("--json");
   const dir = resolveStoreDir(process.cwd());
   const hasStore = existsSync(join(dir, ".git"));
 
   if (clean) {
-    await runClean(dir, hasStore);
+    await runClean(dir, hasStore, jsonFlag);
     return;
   }
 
-  await runReport(dir, hasStore);
+  await runReport(dir, hasStore, jsonFlag);
 }
 
-async function runReport(dir: string, hasStore: boolean): Promise<void> {
+async function runReport(dir: string, hasStore: boolean, jsonFlag: boolean): Promise<void> {
   let status = "";
   let stashes = 0;
 
@@ -44,6 +49,13 @@ async function runReport(dir: string, hasStore: boolean): Promise<void> {
     status = await gitOut(dir, ["status", "--short"]);
     const stashList = await gitOut(dir, ["stash", "list"]);
     stashes = stashList === "" ? 0 : stashList.split("\n").filter((l) => l.length > 0).length;
+  }
+
+  if (jsonFlag) {
+    const statusEntries = parseStatusShort(status);
+    const payload = { store: dir, status: statusEntries, stashes };
+    process.stdout.write(JSON.stringify(payload) + "\n");
+    return;
   }
 
   const out: string[] = [];
@@ -63,20 +75,27 @@ async function runReport(dir: string, hasStore: boolean): Promise<void> {
   process.stdout.write(out.join("\n") + "\n");
 }
 
-async function runClean(dir: string, hasStore: boolean): Promise<void> {
-  const out: string[] = [];
-  out.push(`store: ${dir}`);
-
+async function runClean(dir: string, hasStore: boolean, jsonFlag: boolean): Promise<void> {
   if (!hasStore) {
-    out.push("store already clean");
-    process.stdout.write(out.join("\n") + "\n");
+    if (jsonFlag) {
+      process.stdout.write(
+        JSON.stringify({ store: dir, stashed: false, already_clean: true }) + "\n",
+      );
+      return;
+    }
+    process.stdout.write(`store: ${dir}\nstore already clean\n`);
     return;
   }
 
   const status = await gitOut(dir, ["status", "--short"]);
   if (status.length === 0) {
-    out.push("store already clean");
-    process.stdout.write(out.join("\n") + "\n");
+    if (jsonFlag) {
+      process.stdout.write(
+        JSON.stringify({ store: dir, stashed: false, already_clean: true }) + "\n",
+      );
+      return;
+    }
+    process.stdout.write(`store: ${dir}\nstore already clean\n`);
     return;
   }
 
@@ -96,10 +115,42 @@ async function runClean(dir: string, hasStore: boolean): Promise<void> {
     mkdirSync(join(dir, col), { recursive: true });
   }
 
+  if (jsonFlag) {
+    process.stdout.write(
+      JSON.stringify({ store: dir, stashed: true, stash_ref: "stash@{0}" }) + "\n",
+    );
+    return;
+  }
+
   // After a successful stash, the new entry is at stash@{0}.
+  const out: string[] = [];
+  out.push(`store: ${dir}`);
   out.push("stashed: stash@{0}");
   out.push("recover with: cd " + dir + " && git stash pop");
   process.stdout.write(out.join("\n") + "\n");
+}
+
+/**
+ * Parse the output of `git status --short` into `{ code, path }` entries.
+ * `code` is the verbatim first two characters (preserving spaces). The
+ * path begins at column 3 (one space separator between code and path is
+ * part of porcelain v1 layout but consumed here). Lines shorter than 3
+ * chars are ignored.
+ *
+ * Note: this does not attempt to handle renames (`R  old -> new`) as a
+ * structured pair; the right-hand path is fine to pass through as-is for
+ * diagnostic purposes.
+ */
+function parseStatusShort(status: string): { code: string; path: string }[] {
+  if (status.length === 0) return [];
+  const entries: { code: string; path: string }[] = [];
+  for (const line of status.split("\n")) {
+    if (line.length < 3) continue;
+    const code = line.slice(0, 2);
+    const path = line.slice(3);
+    entries.push({ code, path });
+  }
+  return entries;
 }
 
 /**

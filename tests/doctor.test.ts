@@ -259,3 +259,93 @@ test("tasks --help: lists `doctor`", async () => {
   expect(exitCode).toBe(0);
   expect(stdout).toContain("doctor");
 });
+
+test("tasks doctor --json: clean store returns { store, status: [], stashes: 0 }, exit 0", async () => {
+  const init = await runCli(["init"]);
+  expect(init.exitCode).toBe(0);
+  const store = storePath();
+
+  const { exitCode, stdout } = await runCli(["doctor", "--json"]);
+  expect(exitCode).toBe(0);
+  const data = JSON.parse(stdout);
+  expect(data).toEqual({ store, status: [], stashes: 0 });
+});
+
+test("tasks doctor --json: parses porcelain codes verbatim into { code, path } entries", async () => {
+  const init = await runCli(["init"]);
+  expect(init.exitCode).toBe(0);
+  const store = storePath();
+
+  // Create a tracked file first (mutating commands need a clean tree).
+  const created = await runCli(["new", "trackme"]);
+  expect(created.exitCode).toBe(0);
+  const lsFiles = await git(store, ["ls-files"]);
+  const tracked = lsFiles.stdout.split("\n").filter((l) => l.endsWith(".md"))[0];
+  const trackedPath = join(store, tracked);
+
+  // Modified tracked file => code " M"
+  writeFileSync(trackedPath, readFileSync(trackedPath, "utf-8") + "\nedit\n", "utf-8");
+  // Untracked stray => code "??"
+  writeFileSync(join(store, "stray.md"), "x\n", "utf-8");
+
+  const { exitCode, stdout } = await runCli(["doctor", "--json"]);
+  expect(exitCode).toBe(0);
+  const data = JSON.parse(stdout);
+  expect(data.store).toBe(store);
+  expect(data.stashes).toBe(0);
+  expect(Array.isArray(data.status)).toBe(true);
+
+  const stray = data.status.find((e: { code: string; path: string }) => e.path === "stray.md");
+  expect(stray).toBeDefined();
+  expect(stray.code).toBe("??");
+
+  const mod = data.status.find((e: { code: string; path: string }) => e.path === tracked);
+  expect(mod).toBeDefined();
+  expect(mod.code).toBe(" M");
+});
+
+test("tasks doctor --clean --json: dirty tree returns { store, stashed: true, stash_ref }, tree clean", async () => {
+  const init = await runCli(["init"]);
+  expect(init.exitCode).toBe(0);
+  const store = storePath();
+  writeFileSync(join(store, "stray.md"), "x\n", "utf-8");
+
+  const { exitCode, stdout } = await runCli(["doctor", "--clean", "--json"]);
+  expect(exitCode).toBe(0);
+  const data = JSON.parse(stdout);
+  expect(data).toEqual({ store, stashed: true, stash_ref: "stash@{0}" });
+
+  const status = await git(store, ["status", "--short"]);
+  expect(status.stdout.trim()).toBe("");
+});
+
+test("tasks doctor --clean --json: already-clean tree returns { stashed: false, already_clean: true }, no new stash", async () => {
+  const init = await runCli(["init"]);
+  expect(init.exitCode).toBe(0);
+  const store = storePath();
+
+  const before = await git(store, ["stash", "list"]);
+  const beforeCount = before.stdout.split("\n").filter((l) => l.length > 0).length;
+
+  const { exitCode, stdout } = await runCli(["doctor", "--clean", "--json"]);
+  expect(exitCode).toBe(0);
+  const data = JSON.parse(stdout);
+  expect(data).toEqual({ store, stashed: false, already_clean: true });
+
+  const after = await git(store, ["stash", "list"]);
+  const afterCount = after.stdout.split("\n").filter((l) => l.length > 0).length;
+  expect(afterCount).toBe(beforeCount);
+});
+
+test("tasks doctor: piped (non-TTY) without --json still prints human output, not JSON", async () => {
+  const init = await runCli(["init"]);
+  expect(init.exitCode).toBe(0);
+
+  // runCli already uses piped stdout (non-TTY). Output must remain human.
+  const { exitCode, stdout } = await runCli(["doctor"]);
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain("store:");
+  expect(stdout).toContain("stashes: 0");
+  // Not JSON.
+  expect(() => JSON.parse(stdout)).toThrow();
+});
