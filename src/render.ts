@@ -308,6 +308,74 @@ function boardArrow(ids: number[]): string {
 const BOARD_DROP_ORDER = ["done", "review", "blocked"];
 
 /**
+ * Render the board as stacked vertical blocks when the terminal is too narrow
+ * for even the 3-lane horizontal floor. Each column gets its own section with
+ * header, rule line (header-text width), and rows using the full budget width.
+ */
+function renderBoardVertical(
+  grouped: Record<string, TaskData[]>,
+  blockedBy: Map<string, number[]> | undefined,
+  color: boolean,
+  budget: number,
+): string {
+  const parts: string[] = [];
+  parts.push(`terminal narrow (${budget} cols) · using vertical layout`);
+  parts.push("");
+
+  for (let i = 0; i < BOARD_LANE_ORDER.length; i++) {
+    const col = BOARD_LANE_ORDER[i];
+    const tasks = grouped[col] ?? [];
+    const headerText = `${col.toUpperCase()} (${tasks.length})`;
+    parts.push(style(headerText, ANSI.bold, color));
+    parts.push("─".repeat(headerText.length));
+
+    if (tasks.length === 0) {
+      parts.push("no tasks");
+    } else {
+      const ordered = [...tasks].sort((a, b) => a.id - b.id);
+      const idW = Math.max(...ordered.map((t) => `#${t.id}`.length));
+      const anyUnattended = ordered.some((t) => t.attendance === "unattended");
+      const depsFor = (t: TaskData) => blockedBy?.get(t.uuid) ?? [];
+      const anyDeps = ordered.some((t) => depsFor(t).length > 0);
+
+      const arrowReserve = anyDeps ? 2 + idW + 3 : 0;
+      const gutterCost = anyUnattended ? BOARD_GUTTER_W + BOARD_GAP : 0;
+      const arrowCost = anyDeps ? BOARD_GAP + arrowReserve : 0;
+      const titleW = Math.max(BOARD_TITLE_MIN, budget - idW - BOARD_GAP - gutterCost - arrowCost);
+
+      for (const task of ordered) {
+        const idPlain = `#${task.id}`.padEnd(idW, " ");
+        const id = style(idPlain, ANSI.bold, color);
+
+        const gutter = anyUnattended
+          ? (task.attendance === "unattended" ? "[auto]" : " ".repeat(BOARD_GUTTER_W)) +
+            " ".repeat(BOARD_GAP)
+          : "";
+
+        const titleText = fitTitle(task.title, titleW);
+
+        let tail = "";
+        if (anyDeps) {
+          const arrow = boardArrow(depsFor(task));
+          if (arrow.length > 0) {
+            tail = " ".repeat(BOARD_GAP) + arrow;
+          }
+        }
+
+        const row = `${idPlain}${" ".repeat(BOARD_GAP)}${gutter}${titleText}${tail}`;
+        parts.push(color ? row.replace(idPlain, id) : row);
+      }
+    }
+
+    if (i < BOARD_LANE_ORDER.length - 1) {
+      parts.push("");
+    }
+  }
+
+  return parts.join("\n") + "\n";
+}
+
+/**
  * Render the board as side-by-side lanes in lifecycle order, separated by
  * ` │ `. Each lane has a header (`NAME (N)` in uniform caps), a `─` rule line
  * spanning the lane width, then either task rows or the literal `no tasks`.
@@ -345,6 +413,11 @@ export function renderBoard(grouped: Record<string, TaskData[]>, options: Render
     if (visibleLanes.length <= 3) break;
     dropped.add(dropCandidate);
     visibleLanes = visibleLanes.filter((col) => col !== dropCandidate);
+  }
+
+  // If the 3-lane floor still doesn't fit, switch to the vertical fallback.
+  if (computeRequired(visibleLanes) > budget) {
+    return renderBoardVertical(grouped, blockedBy, color, budget);
   }
 
   const laneCells = visibleLanes.map((col) =>

@@ -410,7 +410,7 @@ test("tasks board without COLUMNS env var defaults to 120-col layout (drops done
   expect(stdout).toContain("hidden: done (1) · widen terminal or run `tasks list` to see all");
 });
 
-test("tasks board COLUMNS=160 shows all six lanes and no hidden footer", async () => {
+test("tasks board COLUMNS=160 shows no hidden footer", async () => {
   const storeDir = deriveStorePath(tasksHome, cwdDir);
   await seedSpecDataset(storeDir);
 
@@ -425,4 +425,84 @@ test("tasks board COLUMNS=160 shows all six lanes and no hidden footer", async (
 
   // No hidden footer
   expect(stdout).not.toContain("hidden:");
+});
+
+// ─── CLI E2E: tasks board vertical fallback ─────────────────────────────────
+
+test("tasks board COLUMNS=55 renders vertical stacked layout with advisory line", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await seedSpecDataset(storeDir);
+
+  const { exitCode, stdout } = await runTasks(["board", "--no-color"], { COLUMNS: "55" });
+  expect(exitCode).toBe(0);
+
+  const lines = stdout.split("\n");
+
+  // Advisory line first
+  expect(lines[0]).toBe("terminal narrow (55 cols) · using vertical layout");
+  // Blank line after advisory
+  expect(lines[1]).toBe("");
+
+  // All six lanes present as stacked blocks in lifecycle order
+  const laneHeaders = lines.filter((l) => /^[A-Z]+ \(\d+\)$/.test(l));
+  expect(laneHeaders).toEqual([
+    "BACKLOG (6)",
+    "READY (0)",
+    "DOING (2)",
+    "BLOCKED (0)",
+    "REVIEW (1)",
+    "DONE (1)",
+  ]);
+
+  // Each header is followed by a rule line
+  for (const header of laneHeaders) {
+    const idx = lines.indexOf(header);
+    expect(lines[idx + 1]).toMatch(/^─+$/);
+  }
+
+  // Empty lanes show "no tasks"
+  const readyIdx = lines.indexOf("READY (0)");
+  expect(lines[readyIdx + 2]).toBe("no tasks");
+  const blockedIdx = lines.indexOf("BLOCKED (0)");
+  expect(lines[blockedIdx + 2]).toBe("no tasks");
+
+  // Dependency arrows still present in vertical layout
+  const jwtLine = lines.find((l) => l.includes("Implement JWT"));
+  expect(jwtLine).toContain("← #1");
+
+  // [auto] tags still present
+  const refreshLine = lines.find((l) => l.includes("Add refresh"));
+  expect(refreshLine).toContain("[auto]");
+
+  // No hidden footer in vertical mode
+  expect(stdout).not.toContain("hidden:");
+});
+
+test("tasks board vertical fallback rule line spans header text width, not lane width", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await seedSpecDataset(storeDir);
+
+  const { exitCode, stdout } = await runTasks(["board", "--no-color"], { COLUMNS: "55" });
+  expect(exitCode).toBe(0);
+
+  const lines = stdout.split("\n");
+  // "BACKLOG (6)" is 11 chars → rule should be 11 dashes
+  const backlogIdx = lines.indexOf("BACKLOG (6)");
+  expect(lines[backlogIdx + 1]).toBe("─".repeat(11));
+  // "DOING (2)" is 9 chars → rule should be 9 dashes
+  const doingIdx = lines.indexOf("DOING (2)");
+  expect(lines[doingIdx + 1]).toBe("─".repeat(9));
+});
+
+test("tasks board vertical fallback uses full content width for titles", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await seedSpecDataset(storeDir);
+
+  const { exitCode, stdout } = await runTasks(["board", "--no-color"], { COLUMNS: "55" });
+  expect(exitCode).toBe(0);
+
+  // In vertical mode titles get more room than in the narrow horizontal lanes.
+  // "Write integration tests for auth" (33 chars) should NOT be truncated at 55 cols.
+  const authLine = stdout.split("\n").find((l) => l.includes("Write integration tests for auth"));
+  expect(authLine).toBeDefined();
 });
