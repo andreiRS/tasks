@@ -15,6 +15,7 @@ import { run as initCmd } from "./commands/init.ts";
 import { run as undoCmd } from "./commands/undo.ts";
 import { run as doctorCmd } from "./commands/doctor.ts";
 import { run as archiveCmd } from "./commands/archive.ts";
+import { run as exportCmd } from "./commands/export.ts";
 
 const COMMANDS: Record<string, (rest: string[]) => Promise<void>> = {
   new: newCmd,
@@ -32,6 +33,7 @@ const COMMANDS: Record<string, (rest: string[]) => Promise<void>> = {
   undo: undoCmd,
   doctor: doctorCmd,
   archive: archiveCmd,
+  export: exportCmd,
 };
 
 const [command, ...rest] = process.argv.slice(2);

@@ -33,6 +33,8 @@ Commands:
   doctor                  Report store path, git status, and stash count.
   archive [<id|uuid>] [--before <Nd>] [--json]
                           Retire done/ tasks into archive/ (no-arg = all).
+  export --json [--include-archived] [--columns <col,col,...>]
+                          Whole-Store JSON dump for agents (live tasks + dep graph).
   help                    Show this message.
 
 Global flags:
