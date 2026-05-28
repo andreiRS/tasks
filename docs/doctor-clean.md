@@ -1,78 +1,77 @@
-# `tasks doctor --clean` — Feature Spec
+# `tasks doctor` — Feature Spec
 
-Status: proposed, not implemented.
+Status: proposed, not implemented. See ADR-0009.
 
 ## Motivation
 
 The store's working tree must stay clean between mutating commands; every
-`new`/`mv`/`rm`/`edit-followup` hits a `STORE_DIRTY` guard otherwise. Editor
-droppings (`.swp`, `*~`, `.DS_Store`, `.#*`) are handled by a `.gitignore`
-seeded at store init, but two classes of mess slip past:
+`new`/`mv`/`rm`/`edit` hits a `STORE_DIRTY` guard otherwise. When the tree
+*is* dirty (stray editor file, untracked draft, modified tracked file), the
+user currently has to `cd` into a hidden, path-encoded store directory and
+run raw `git` to recover.
 
-1. Files an editor created that the user wants to keep but doesn't want
-   tracked (notes, scratch YAML, half-finished task drafts).
-2. Files the gitignore doesn't cover (unusual editor names, new OS junk,
-   accidental `cp`/`mv` into the store).
-
-The user then has to `cd` into a hidden, path-encoded store directory and
-run raw `git` to recover. `tasks doctor --clean` is the supported way to
-inspect and remediate the store from the project root.
+`tasks doctor` is the supported way to inspect and remediate the store
+from the project root, without ever needing to know where it lives or
+learning git internals to clean it up.
 
 ## Command shape
 
 ```
-tasks doctor                    # report only — never modifies
-tasks doctor --clean            # interactive: list strays, prompt y/N per file
-tasks doctor --clean --force    # non-interactive: delete all reported strays
-tasks doctor --clean --json     # machine-readable report + actions taken
+tasks doctor             # report only — store path, status, stash count
+tasks doctor --clean     # stash everything; tree becomes clean
+tasks doctor --json      # machine-readable form of either mode
 ```
 
-All forms require the flock (same as other mutating commands) so a
-concurrent `tasks new` can't race the cleanup.
+`doctor` never takes the flock, never validates schema, and never deletes
+files. Recovery is non-destructive by construction.
 
-## What `doctor` reports
+## `tasks doctor` (report)
 
-For the store directory of the current project:
+Prints, for the store directory of the current project:
 
-- **Store path** — absolute path, so the user finally sees it.
-- **Git status** — `git status --short` output, grouped by:
-  - `staged`     — files in the index awaiting commit
-  - `modified`   — tracked files with unstaged changes
-  - `untracked`  — files git would track that aren't tracked yet
-  - `stray`      — untracked files matching known disposable patterns
-                   (`.swp`, `~`, `.DS_Store`, `.#*`, `*.bak`, `*.orig`)
-- **Schema sanity** — meta.yaml present, all six column dirs present,
-  every `.md` file parses and has required frontmatter fields.
-- **Lock state** — whether `.tasks-lock` is held by a live PID.
+- **Store path** — absolute, so the user finally sees it.
+- **Status** — `git status --short` output of the store.
+- **Stashes** — count of outstanding stashes (entries created by previous
+  `doctor --clean` runs are visible here).
 
-Exit code: 0 if everything is clean, 1 if any issue is reported (so it
-can be wired into CI / pre-commit hooks).
+Always exits 0. This is diagnostic output, not a CI gate.
 
-## What `--clean` does
+## `tasks doctor --clean`
 
-Only operates on the `stray` bucket. Never touches:
+Runs, inside the store directory:
 
-- Tracked files (use git directly if you want to discard).
-- Untracked files outside the stray pattern set (use `git clean` if you
-  truly mean it; doctor will not silently delete user data).
-- The flock file.
-- `.git/` contents.
+```
+git stash push --include-untracked --message "doctor <iso-ts>"
+```
 
-Interactive default lists each stray with size + mtime and prompts
-`delete? [y/N]`. `--force` deletes without prompting. `--json` emits
-`{ removed: [...], kept: [...], errors: [...] }`.
+- On a dirty tree: prints the new stash ref (e.g. `stash@{0}`) and the
+  store path, so the user can `cd <path> && git stash pop` if they want
+  the contents back.
+- On a clean tree: prints `store already clean`. No stash is created.
+- Exit 0 in both cases.
 
-## Out of scope
+## What's intentionally *not* here (v1)
 
-- Reformatting task files.
-- Repairing broken graph state (cycles, missing UUIDs) — that's a separate
-  `tasks doctor --repair` later.
-- Auto-running on every command (rejected: would mask real user data loss).
+- No `--force`, no interactive prompts, no `--include=<glob>`.
+- No deletion of any kind. Strays, drafts, and accidentally-copied files
+  are all preserved inside the stash; the user decides what to keep.
+- No schema validation. Half-finished drafts with missing frontmatter
+  fields are stashed alongside everything else, not flagged.
+- No flock acquisition. `doctor` must be runnable when the store is in a
+  weird state, including when other things hold the flock.
+- No structured pruning of old stashes. `doctor` only surfaces the count;
+  pruning is `git stash drop` for now.
+
+These may return as separate commands (`doctor --check`, `doctor --repair`,
+`doctor --stash <pop|list|drop>`) but are out of scope for the first cut.
 
 ## Test plan
 
-- Strays present + `--force` → all removed, exit 0, store clean afterward.
-- Tracked-but-modified file present → reported as `modified`, never deleted.
-- Random `notes.txt` in store → reported as `untracked`, never deleted.
-- `doctor` (no flags) with a clean tree → exit 0, no changes.
-- `doctor --clean` while another process holds the flock → `FLOCK_BUSY`.
+- Strays present + `--clean` → tree clean afterward, exit 0, stash ref printed.
+- Tracked-modified file present + `--clean` → stashed (not deleted), tree clean.
+- Mix of modified + untracked + strays + `--clean` → all captured in one stash.
+- Clean tree + `--clean` → `store already clean`, exit 0, no new stash.
+- `doctor` (no flags) with strays present → exit 0, status lists them.
+- `doctor` after N prior `--clean` runs → stash count = N.
+- `doctor --json` → structured `{ store, status, stashes }` (and `stash_ref`
+  on `--clean`).
