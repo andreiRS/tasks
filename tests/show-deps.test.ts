@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -33,6 +33,12 @@ async function runTasks(
     new Response(proc.stderr).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+function deriveStoreDir(): string {
+  const realCwd = realpathSync(cwdDir);
+  const encoded = realCwd.replace(/-/g, "--").replace(/\//g, "-");
+  return join(tasksHome, "projects", encoded);
 }
 
 async function plantTask(title: string): Promise<{ id: number; uuid: string }> {
@@ -149,4 +155,79 @@ test("show (human): task with no edges prints neither 'Depends on:' nor 'Blocks:
   expect(exitCode).toBe(0);
   expect(stdout).not.toContain("Depends on:");
   expect(stdout).not.toContain("Blocks:");
+});
+
+// ─── Test 7: deps: block renders #id title for resolvable deps ────────────────
+
+test("show (human): deps: block renders '#<id> <title>' for each resolvable dep", async () => {
+  const a = await plantTask("task A");
+  const b = await plantTask("task B");
+  const c = await plantTask("task C");
+
+  const r = await runTasks(["link", String(a.id), "--depends-on", String(b.id), "--depends-on", String(c.id)]);
+  expect(r.exitCode).toBe(0);
+
+  const { exitCode, stdout } = await runTasks(["show", String(a.id), "--no-color"]);
+  expect(exitCode).toBe(0);
+  // The deps: metadata block should list resolved entries, not raw UUIDs
+  expect(stdout).toMatch(/deps:\s+#\d+/);
+  expect(stdout).toContain(`#${b.id} task B`);
+  expect(stdout).toContain(`#${c.id} task C`);
+  // Raw UUIDs must not appear in the deps: block
+  expect(stdout).not.toContain(b.uuid);
+  expect(stdout).not.toContain(c.uuid);
+});
+
+// ─── Test 8: deps: block shows (none) for task with no deps ──────────────────
+
+test("show (human): deps: block shows '(none)' for task with no deps", async () => {
+  await plantTask("solo task");
+  const { exitCode, stdout } = await runTasks(["show", "1", "--no-color"]);
+  expect(exitCode).toBe(0);
+  expect(stdout).toMatch(/deps:\s+\(none\)/);
+});
+
+// ─── Test 9: dangling dep UUID renders <unknown> <uuid>, exits 0 ──────────────
+
+test("show (human): dangling dep UUID renders '<unknown> <uuid>' and exits 0", async () => {
+  const a = await plantTask("task A");
+  const danglingUuid = "00000000-0000-4000-8000-000000000099";
+
+  // Inject the dangling UUID directly into task A's file on disk, bypassing the validator
+  const storeDir = deriveStoreDir();
+  const backlogDir = join(storeDir, "backlog");
+  const files = readdirSync(backlogDir).filter((f) => f.endsWith(".md"));
+  const aFile = files.find((f) => f.startsWith(`${a.id}-`))!;
+  const aPath = join(backlogDir, aFile);
+  const raw = readFileSync(aPath, "utf-8");
+  // Replace the empty deps line with the dangling uuid
+  const patched = raw.replace(/^deps: \[\]$/m, `deps:\n  - "${danglingUuid}"`);
+  writeFileSync(aPath, patched, "utf-8");
+  // Stage + commit so store remains clean
+  const gitBin = Bun.which("git") ?? "/opt/homebrew/bin/git";
+  const gc = Bun.spawnSync([gitBin, "add", aPath], { cwd: storeDir });
+  expect(gc.exitCode).toBe(0);
+  const gco = Bun.spawnSync([gitBin, "commit", "-m", "inject dangling dep"], { cwd: storeDir });
+  expect(gco.exitCode).toBe(0);
+
+  const { exitCode, stdout } = await runTasks(["show", String(a.id), "--no-color"]);
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain(`<unknown> ${danglingUuid}`);
+});
+
+// ─── Test 10: show --json schema unchanged by dep rendering ──────────────────
+
+test("show --json: schema is unchanged when deps are present (has deps array with UUIDs)", async () => {
+  const a = await plantTask("task A");
+  const b = await plantTask("task B");
+
+  const lr = await runTasks(["link", String(a.id), "--depends-on", String(b.id)]);
+  expect(lr.exitCode).toBe(0);
+
+  const { exitCode, stdout } = await runTasks(["show", String(a.id), "--json"]);
+  expect(exitCode).toBe(0);
+  const parsed = JSON.parse(stdout) as Record<string, unknown>;
+  // deps field must still be an array of UUIDs (not resolved objects)
+  expect(Array.isArray(parsed.deps)).toBe(true);
+  expect((parsed.deps as string[])[0]).toBe(b.uuid);
 });
