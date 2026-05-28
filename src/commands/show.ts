@@ -1,0 +1,49 @@
+import { findAllTasks, findTask, resolveStoreDir, type TaskData } from "../store.ts";
+import { renderTask } from "../render.ts";
+import { writeJsonError, writePlainError } from "../cli/errors.ts";
+import { shouldColor } from "../cli/color.ts";
+import { withAcceptanceCriteria } from "../cli/filters.ts";
+
+export async function run(rest: string[]): Promise<void> {
+  const jsonFlag = rest.includes("--json");
+  const noColorFlag = rest.includes("--no-color");
+  const idOrUuid = rest.find((a) => a !== "--json" && a !== "--no-color") ?? "";
+
+  if (!idOrUuid) {
+    if (jsonFlag) {
+      writeJsonError("MISSING_FIELD", "id or uuid is required", {});
+    } else {
+      writePlainError("MISSING_FIELD: id or uuid is required");
+    }
+    process.exit(1);
+  }
+
+  const dir = resolveStoreDir(process.cwd());
+  const task = findTask(dir, idOrUuid);
+
+  if (!task) {
+    if (jsonFlag) {
+      writeJsonError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
+    } else {
+      writePlainError(`NOT_FOUND: task not found: ${idOrUuid}`);
+    }
+    process.exit(1);
+  }
+
+  const allTasks = findAllTasks(dir);
+  const byUuid = new Map<string, TaskData>(allTasks.map((t) => [t.uuid, t]));
+  const deps_out = task.deps
+    .map((u) => byUuid.get(u))
+    .filter((t): t is TaskData => t !== undefined)
+    .map((t) => ({ uuid: t.uuid, id: t.id, title: t.title }));
+  const deps_in = allTasks
+    .filter((t) => t.deps.includes(task.uuid))
+    .sort((a, b) => a.id - b.id)
+    .map((t) => ({ uuid: t.uuid, id: t.id, title: t.title }));
+
+  if (jsonFlag) {
+    process.stdout.write(JSON.stringify({ ...withAcceptanceCriteria(task), deps_out, deps_in }) + "\n");
+  } else {
+    process.stdout.write(renderTask(task, { color: shouldColor(noColorFlag), deps_out, deps_in }));
+  }
+}
