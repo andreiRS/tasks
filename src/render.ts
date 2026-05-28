@@ -90,10 +90,37 @@ function glyphs(task: TaskData): string {
 }
 
 /**
+ * Status order for the human list view, top to bottom. Front-loads the working
+ * set (ready→doing→blocked→review) and sinks completed work and the raw backlog.
+ * This governs only the text render; `--json` keeps the canonical column order.
+ */
+const LIST_STATUS_ORDER = ["ready", "doing", "blocked", "review", "done", "backlog"];
+
+/**
+ * Return a copy of `tasks` ordered for the human list view: by status using
+ * {@link LIST_STATUS_ORDER}, then by short id ascending within each status.
+ * Columns not in the status order sort last, stably.
+ */
+function sortForList(tasks: TaskData[]): TaskData[] {
+  const rank = (col: string) => {
+    const i = LIST_STATUS_ORDER.indexOf(col);
+    return i === -1 ? LIST_STATUS_ORDER.length : i;
+  };
+  return [...tasks].sort((a, b) => {
+    const ra = rank(a.column);
+    const rb = rank(b.column);
+    if (ra !== rb) return ra - rb;
+    return a.id - b.id;
+  });
+}
+
+/**
  * Render a flat list of tasks as a human-readable string.
  *
  * Each task is one line: `#<id>  <column padded>  <title>  <glyphs>`
- * An empty task array renders as a single `(no tasks)` line.
+ * Rows are ordered by status (ready→doing→blocked→review→done→backlog), then by
+ * short id ascending within each status. An empty task array renders as a single
+ * `(no tasks)` line.
  *
  * When `options.color` is true, the column name is styled with cyan and the
  * id prefix is bold. Stripping ANSI from a colored render yields the plain render.
@@ -106,7 +133,7 @@ export function renderList(tasks: TaskData[], options: RenderOptions): string {
   }
 
   const lines: string[] = [];
-  for (const task of tasks) {
+  for (const task of sortForList(tasks)) {
     const id = style(`#${task.id}`, ANSI.bold, color);
     const col = style(task.column.padEnd(8, " "), ANSI.cyan, color);
     const g = style(glyphs(task), ANSI.dim, color);

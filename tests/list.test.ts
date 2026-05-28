@@ -65,15 +65,16 @@ const sampleTasks: TaskData[] = [
 ];
 
 test("renderList returns one line per task with id, column, title", () => {
+  // List view sorts by status (doing before backlog), so #2/doing leads #1/backlog.
   const out = renderList(sampleTasks, {});
   const lines = out.split("\n").filter((l) => l.length > 0);
   expect(lines).toHaveLength(2);
-  expect(lines[0]).toContain("#1");
-  expect(lines[0]).toContain("backlog");
-  expect(lines[0]).toContain("first task");
-  expect(lines[1]).toContain("#2");
-  expect(lines[1]).toContain("doing");
-  expect(lines[1]).toContain("second task");
+  expect(lines[0]).toContain("#2");
+  expect(lines[0]).toContain("doing");
+  expect(lines[0]).toContain("second task");
+  expect(lines[1]).toContain("#1");
+  expect(lines[1]).toContain("backlog");
+  expect(lines[1]).toContain("first task");
 });
 
 test("renderList on empty array returns (no tasks) message", () => {
@@ -380,6 +381,59 @@ test("tasks list --column OR-combines multiple --column flags (--json)", async (
   expect(cols).toContain("backlog");
   expect(cols).toContain("doing");
   expect(cols).not.toContain("done");
+});
+
+// ─── CLI E2E: tasks list human output sort order ─────────────────────────────
+
+test("tasks list (no flag) orders by status ready→doing→blocked→review→done→backlog, short-id asc within", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  // Plant one task per status, deliberately out of both id order and column
+  // order, plus two in the same column (doing) to check short-id ascending.
+  plantTask(storeDir, "backlog", 1, "backlog one");
+  plantTask(storeDir, "done", 2, "done one");
+  plantTask(storeDir, "review", 3, "review one");
+  plantTask(storeDir, "blocked", 4, "blocked one");
+  plantTask(storeDir, "doing", 6, "doing two");
+  plantTask(storeDir, "doing", 5, "doing one");
+  plantTask(storeDir, "ready", 7, "ready one");
+  const git = (args: string[]) =>
+    Bun.spawn(["git", ...args], { cwd: storeDir, stdout: "pipe", stderr: "pipe" }).exited;
+  await git(["add", "."]);
+  await git(["commit", "-m", "seed tasks"]);
+
+  const { exitCode, stdout } = await runTasks(["list"]);
+  expect(exitCode).toBe(0);
+
+  const lines = stdout.split("\n").filter((l) => l.length > 0);
+  expect(lines).toHaveLength(7);
+  // ready → doing (short-id asc: #5 before #6) → blocked → review → done → backlog
+  expect(lines[0]).toContain("ready one");
+  expect(lines[1]).toContain("doing one"); // #5
+  expect(lines[2]).toContain("doing two"); // #6
+  expect(lines[3]).toContain("blocked one");
+  expect(lines[4]).toContain("review one");
+  expect(lines[5]).toContain("done one");
+  expect(lines[6]).toContain("backlog one");
+});
+
+test("tasks list --json keeps canonical column order, not the human sort order", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "backlog one");
+  plantTask(storeDir, "done", 2, "done one");
+  plantTask(storeDir, "doing", 3, "doing one");
+  const git = (args: string[]) =>
+    Bun.spawn(["git", ...args], { cwd: storeDir, stdout: "pipe", stderr: "pipe" }).exited;
+  await git(["add", "."]);
+  await git(["commit", "-m", "seed tasks"]);
+
+  const { exitCode, stdout } = await runTasks(["list", "--json"]);
+  expect(exitCode).toBe(0);
+
+  const parsed = JSON.parse(stdout) as Array<Record<string, unknown>>;
+  // findAllTasks walks COLUMNS = backlog, ready, doing, blocked, review, done
+  expect(parsed.map((t) => t.column)).toEqual(["backlog", "doing", "done"]);
 });
 
 // ─── CLI E2E: tasks list --column <unknown> ───────────────────────────────────
