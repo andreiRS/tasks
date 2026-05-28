@@ -19,12 +19,20 @@ The working directory rooted at the nearest ancestor `.git/` directory (falling 
 _Avoid_: workspace, repo (ambiguous with the Store's git repo), folder.
 
 **Store**:
-The per-Project git repository under `$TASKS_HOME/projects/<encoded-path>/` that holds every Task file plus `meta.yaml`. The Store is the system of record; the CLI is the only sanctioned writer.
+The per-Project git repository under `$TASKS_HOME/projects/<encoded-path>/` (where `TASKS_HOME` defaults to `~/.local/share/tasks`) that holds every Task file plus its Meta (`meta.yaml`). The Store is the system of record; the CLI is the only sanctioned writer.
 _Avoid_: database, backend, data dir.
 
+**Meta** (also: `meta.yaml`):
+The per-Store YAML file that holds Store-wide state, currently just `next_id` for Short ID allocation. Read and written by the Validator inside the Lock so allocation can never race.
+_Avoid_: config, manifest, store.yaml.
+
 **Column**:
-One of the six fixed status buckets: `backlog`, `ready`, `doing`, `blocked`, `review`, `done`. A Task's Column is encoded by the directory the file lives in. Moving Columns is a `git mv`.
+One of the six fixed status buckets: `backlog`, `ready`, `doing`, `blocked`, `review`, `done`. A Task's Column is encoded by the directory the file lives in. Moving Columns is a Transition (a `git mv`).
 _Avoid_: status, state, lane, stage.
+
+**Transition**:
+Any move of a Task from one Column to another. All Column-to-Column moves are legal; the Validator does not enforce a workflow (per `docs/adr/0005-open-transitions.md`). Callers are free to move a Task `done → doing`, `blocked → ready`, and so on.
+_Avoid_: status change, workflow step, promote, demote.
 
 **Dependency** (also: **Dep**):
 A directed edge `A → B` meaning "Task A depends on Task B" (equivalently "B blocks A"). Stored as a UUID in the dependent Task's `deps` frontmatter list. Always references the UUID, never the Short ID.
@@ -57,6 +65,14 @@ _Avoid_: GUID, hash, key.
 The YAML block at the top of a Task file. Required keys: `id`, `uuid`, `title`, `created_at`, `updated_at`. Optional with defaults: `deps` (`[]`), `attendance` (`attended`), `effort` (`medium`). Defaults for `attendance` and `effort` are written explicitly to disk by `tasks new` so files are self-describing in `$EDITOR`. Read and written via the `yaml` library's `Document` API to preserve ordering and quoting style.
 _Avoid_: header, metadata.
 
+**Title**:
+The required `title` Frontmatter field. Non-empty after trim, single line (no embedded newlines), max 200 characters. The Validator rejects violations with `INVALID_TITLE`.
+_Avoid_: name, summary, subject.
+
+**Timestamps**:
+The required `created_at` and `updated_at` Frontmatter fields. `created_at` is set once at Task creation and is immutable. `updated_at` is rewritten by every Mutating command that touches the Task, including Transitions. Cutoff filters on `updated_at`; Next orders by `created_at`.
+_Avoid_: dates, times, mtime, ctime.
+
 **Body**:
 The markdown content of a Task file below the frontmatter. Free-form prose, except for the conventional `## Acceptance Criteria` section.
 _Avoid_: description, notes, content (ambiguous with the whole file).
@@ -66,8 +82,12 @@ The content of the `## Acceptance Criteria` section in the Body. Parsed by a han
 _Avoid_: AC (only spelled out), spec, requirements.
 
 **Attendance**:
-A Frontmatter enum, either `attended` or `unattended`, that gates agent pickup. `unattended` means an agent may pick this Task up; `attended` (the default) excludes it from agent pickup. Settable on `tasks new --unattended` and on `tasks set --attendance`. Invalid values are rejected with `INVALID_ATTENDANCE`.
+A Frontmatter enum, either `attended` or `unattended`, that gates agent Pickup. `unattended` means an agent may pick this Task up; `attended` (the default) excludes it from agent Pickup. Settable on `tasks new --unattended` and on `tasks set --attendance`. Invalid values are rejected with `INVALID_ATTENDANCE`.
 _Avoid_: agent_ready, human_in_loop, assignable, manual.
+
+**Pickup**:
+The act of a caller (Human or Agent) taking ownership of a Task by moving it to `doing`. Eligibility is gated by Attendance: `unattended` Tasks are eligible for Agent Pickup, `attended` Tasks are not. Humans Pickup regardless of Attendance.
+_Avoid_: assign, claim, take, grab.
 
 **Effort**:
 A Frontmatter enum, either `low`, `medium`, or `high`, capturing the expected cognitive or model resource needed to pick up this Task. Pure metadata in v1: stored, surfaced, and filterable, but the CLI does not act on it (no automatic model selection, no ordering bias). Defaults to `medium`. Invalid values are rejected with `INVALID_EFFORT`.
@@ -85,17 +105,33 @@ _Avoid_: linter, checker, schema.
 The component that turns Tasks into either human-facing text (with ANSI styling) or JSON. Owns `--no-color` / `NO_COLOR` handling so every read command inherits the contract.
 _Avoid_: formatter, printer, view.
 
+**JSON mode**:
+The machine-readable output contract enabled by passing `--json` to any command. On success: `{ "ok": true, ... }` to stdout, exit 0. On failure: the Error envelope to stderr, non-zero exit. Both shapes are stable contracts; new fields may be added, existing fields never change meaning.
+_Avoid_: machine output, structured output, `--json` flag.
+
 **Error envelope**:
-The shape returned on stderr when a command run with `--json` fails: `{ "ok": false, "error": { "code", "message", "details" } }`. `code` is drawn from a fixed enum (see README). The envelope shape is a stable contract; new codes may be added, the shape never changes.
+The shape returned on stderr when a command run in JSON mode fails: `{ "ok": false, "error": { "code", "message", "details" } }`. `code` is drawn from a fixed enum (see README). The envelope shape is a stable contract; new codes may be added, the shape never changes.
 _Avoid_: error message, exception, failure object.
 
 **Cutoff**:
 The default 7-day window applied to `done` Tasks in `list` and `board`: Tasks whose `updated_at` is older are hidden unless `--all` or `--since <duration>` is passed.
 _Avoid_: filter, expiry.
 
+**Mutating command**:
+A CLI invocation that writes to the Store. Takes the Lock, runs the Validator, and produces exactly one git commit on success. May trigger Auto-init. Refuses to run against a Dirty tree, except for `tasks edit`.
+_Avoid_: write command, mutator, mutation.
+
+**Read command**:
+A CLI invocation that only reads the Store. Does not take the Lock, does not run the Validator, does not commit, and never triggers Auto-init. Inherits `--no-color` / `NO_COLOR` and JSON mode handling from the Renderer.
+_Avoid_: query command, lookup, viewer.
+
 **Dirty tree**:
-The Store's git working tree has uncommitted changes. Every mutating command except `tasks edit` refuses with `STORE_DIRTY` when the tree is dirty; `tasks edit --abort` is the recovery path.
+The Store's git working tree has uncommitted changes. Every Mutating command except `tasks edit` refuses with `STORE_DIRTY` when the tree is dirty; `tasks edit --abort` is the recovery path.
 _Avoid_: pending changes, unstaged.
+
+**Edit session**:
+The flow opened by `tasks edit`: the CLI checks the Task out into `$EDITOR`, leaves the Store's working tree dirty until the user saves and exits, and commits on success. `tasks edit --abort` discards the in-progress change and restores a clean tree. `edit` is the sole Mutating command exempt from the `STORE_DIRTY` check.
+_Avoid_: editing, edit mode, edit flow.
 
 **Lock**:
 The exclusive `flock(1)` taken on `<store>/.tasks-lock` for the duration of any mutating command. Serializes ID allocation, validation, file writes, and the git commit as one critical section. Reads do not take the Lock.
