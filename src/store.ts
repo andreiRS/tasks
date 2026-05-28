@@ -22,6 +22,13 @@ export class TasksError extends Error {
 export const COLUMNS = ["backlog", "ready", "doing", "blocked", "review", "done"];
 
 /**
+ * Sibling directory holding archived tasks. NOT a Column: transitions never
+ * target it, list/board/next skip it by default, and the only way in is the
+ * dedicated `tasks archive` command. See `docs/adr/0010-archive-as-sibling-directory.md`.
+ */
+export const ARCHIVE_DIR = "archive";
+
+/**
  * Walk up from `startDir` to find the nearest `.git` directory.
  * Returns the directory containing `.git`, or `startDir` if none found.
  */
@@ -111,6 +118,7 @@ export async function ensureStore(dir: string): Promise<boolean> {
   for (const col of COLUMNS) {
     mkdirSync(join(dir, col), { recursive: true });
   }
+  mkdirSync(join(dir, ARCHIVE_DIR), { recursive: true });
 
   // git init
   await git(["init"], dir);
@@ -148,6 +156,7 @@ export async function initStore(dir: string): Promise<{ created: boolean; path: 
   for (const col of COLUMNS) {
     mkdirSync(join(dir, col), { recursive: true });
   }
+  mkdirSync(join(dir, ARCHIVE_DIR), { recursive: true });
 
   // git init
   await git(["init"], dir);

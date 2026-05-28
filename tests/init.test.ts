@@ -55,6 +55,10 @@ test("tasks init: first init creates store with all six column dirs and meta.yam
     expect(existsSync(join(dir, col))).toBe(true);
   }
 
+  // archive/ is a sibling directory (not a Column) created at init so
+  // `tasks archive` can git-mv into it without bootstrapping. See ADR-0010.
+  expect(existsSync(join(dir, "archive"))).toBe(true);
+
   expect(existsSync(join(dir, "meta.yaml"))).toBe(true);
   const meta = readFileSync(join(dir, "meta.yaml"), "utf-8");
   expect(meta.trim()).toBe("next_id: 1");
