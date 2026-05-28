@@ -21,6 +21,10 @@ export class TasksError extends Error {
 
 export const COLUMNS = ["backlog", "ready", "doing", "blocked", "review", "done"];
 
+/** Canonical message for the dirty-tree guard, shared by every mutation. */
+const STORE_DIRTY_MESSAGE =
+  "store working tree is dirty; commit or discard pending changes before running mutating commands";
+
 /**
  * Sibling directory holding archived tasks. NOT a Column: transitions never
  * target it, list/board/next skip it by default, and the only way in is the
@@ -296,6 +300,39 @@ export async function isStoreDirty(dir: string): Promise<boolean> {
   return out.trim().length > 0;
 }
 
+/** Pre-flight guards a mutation runs inside the lock before touching the store. */
+interface TransactionGuards {
+  /** Reject if the working tree has uncommitted changes (STORE_DIRTY). */
+  requireClean?: boolean;
+  /** Reject if any existing task file carries an invalid enum value. */
+  requireValidEnums?: boolean;
+}
+
+/**
+ * Run a mutation under the store lock with the shared pre-flight guards.
+ *
+ * Every mutating command serializes on the flock, then (per `guards`) checks
+ * the dirty-tree invariant and enum validity before `fn` writes anything.
+ * Centralizing this preamble keeps the STORE_DIRTY message and guard ordering
+ * identical across mutations and makes the invariants impossible to forget when
+ * adding a new mutation.
+ */
+async function withTransaction<T>(
+  dir: string,
+  guards: TransactionGuards,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return withLock(dir, async () => {
+    if (guards.requireClean && (await isStoreDirty(dir))) {
+      throw new TasksError("STORE_DIRTY", STORE_DIRTY_MESSAGE, {});
+    }
+    if (guards.requireValidEnums) {
+      validateEnums(dir);
+    }
+    return fn();
+  });
+}
+
 export interface CreateTaskOptions {
   attendance?: "attended" | "unattended";
   effort?: "low" | "medium" | "high";
@@ -319,10 +356,7 @@ export interface CreateTaskOptions {
  * Returns the short id of the new task.
  */
 export async function createTask(dir: string, title: string, opts: CreateTaskOptions = {}): Promise<number> {
-  return withLock(dir, async () => {
-    // Reject if any existing task file carries an invalid enum value.
-    validateEnums(dir);
-
+  return withTransaction(dir, { requireValidEnums: true }, async () => {
     // Read or initialize meta.yaml
     const metaPath = join(dir, "meta.yaml");
     let nextId = 1;
@@ -689,19 +723,7 @@ export function groupTasksByColumn(tasks: TaskData[]): Record<string, TaskData[]
  * this also checks inside the lock for the definitive guard).
  */
 export async function moveTask(dir: string, idOrUuid: string, targetColumn: string): Promise<void> {
-  return withLock(dir, async () => {
-    // Dirty-tree guard inside the lock (definitive check)
-    if (await isStoreDirty(dir)) {
-      throw new TasksError(
-        "STORE_DIRTY",
-        "store working tree is dirty; commit or discard pending changes before running mutating commands",
-        {}
-      );
-    }
-
-    // Reject if any existing task file carries an invalid enum value.
-    validateEnums(dir);
-
+  return withTransaction(dir, { requireClean: true, requireValidEnums: true }, async () => {
     // Find the task
     const task = findTask(dir, idOrUuid);
     if (!task) {
@@ -793,19 +815,7 @@ export async function removeTask(
   idOrUuid: string,
   force: boolean = false,
 ): Promise<{ task: TaskData; affected: TaskData[] }> {
-  return withLock(dir, async () => {
-    // Dirty-tree guard inside the lock (definitive check)
-    if (await isStoreDirty(dir)) {
-      throw new TasksError(
-        "STORE_DIRTY",
-        "store working tree is dirty; commit or discard pending changes before running mutating commands",
-        {}
-      );
-    }
-
-    // Reject if any existing task file carries an invalid enum value.
-    validateEnums(dir);
-
+  return withTransaction(dir, { requireClean: true, requireValidEnums: true }, async () => {
     // Find the task
     const task = findTask(dir, idOrUuid);
     if (!task) {
@@ -909,16 +919,7 @@ export async function archiveTasks(
   dir: string,
   opts: ArchiveOptions = {},
 ): Promise<{ archived: TaskData[] }> {
-  return withLock(dir, async () => {
-    if (await isStoreDirty(dir)) {
-      throw new TasksError(
-        "STORE_DIRTY",
-        "store working tree is dirty; commit or discard pending changes before running mutating commands",
-        {},
-      );
-    }
-    validateEnums(dir);
-
+  return withTransaction(dir, { requireClean: true, requireValidEnums: true }, async () => {
     let targets: TaskData[];
     if (opts.idOrUuid) {
       const t = findTask(dir, opts.idOrUuid);
@@ -1134,12 +1135,9 @@ export async function editTask(
   idOrUuid: string,
   runEditor: EditorRunner,
 ): Promise<{ kind: "noop" } | { kind: "committed"; titleChanged: boolean }> {
-  return withLock(dir, async () => {
-    // Reject if any existing task file (other than the editing one) carries
-    // an invalid enum value. The edit path itself may set new values; those
-    // are validated post-save below.
-    validateEnums(dir);
-
+  // Enum guard rejects pre-existing bad values in other files; the edit path
+  // may set new enum values, which are validated post-save below.
+  return withTransaction(dir, { requireValidEnums: true }, async () => {
     const loc = findTaskFilename(dir, idOrUuid);
     if (!loc) {
       throw new TasksError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
@@ -1285,19 +1283,7 @@ export async function linkTask(
   subjectRef: string,
   targetRefs: string[],
 ): Promise<void> {
-  return withLock(dir, async () => {
-    // Dirty-tree guard inside the lock (definitive check)
-    if (await isStoreDirty(dir)) {
-      throw new TasksError(
-        "STORE_DIRTY",
-        "store working tree is dirty; commit or discard pending changes before running mutating commands",
-        {}
-      );
-    }
-
-    // Reject if any existing task file carries an invalid enum value.
-    validateEnums(dir);
-
+  return withTransaction(dir, { requireClean: true, requireValidEnums: true }, async () => {
     // Resolve subject
     const subject = findTask(dir, subjectRef);
     if (!subject) {
@@ -1406,19 +1392,7 @@ export async function unlinkTask(
   subjectRef: string,
   targetRefs: string[],
 ): Promise<void> {
-  return withLock(dir, async () => {
-    // Dirty-tree guard inside the lock (definitive check)
-    if (await isStoreDirty(dir)) {
-      throw new TasksError(
-        "STORE_DIRTY",
-        "store working tree is dirty; commit or discard pending changes before running mutating commands",
-        {}
-      );
-    }
-
-    // Reject if any existing task file carries an invalid enum value.
-    validateEnums(dir);
-
+  return withTransaction(dir, { requireClean: true, requireValidEnums: true }, async () => {
     // Resolve subject
     const subject = findTask(dir, subjectRef);
     if (!subject) {
@@ -1533,19 +1507,7 @@ export async function setTask(
   idOrUuid: string,
   opts: SetTaskOptions,
 ): Promise<void> {
-  return withLock(dir, async () => {
-    // Dirty-tree guard inside the lock (definitive check)
-    if (await isStoreDirty(dir)) {
-      throw new TasksError(
-        "STORE_DIRTY",
-        "store working tree is dirty; commit or discard pending changes before running mutating commands",
-        {}
-      );
-    }
-
-    // Reject if any existing task file carries an invalid enum value.
-    validateEnums(dir);
-
+  return withTransaction(dir, { requireClean: true, requireValidEnums: true }, async () => {
     // Validate inputs.
     if (opts.title !== undefined) {
       const err = validateTitle(opts.title);
@@ -1743,15 +1705,7 @@ async function gitCapture(dir: string, args: string[]): Promise<string> {
  * Returns the SHA of the revert commit (now HEAD) on success.
  */
 export async function undoStore(dir: string): Promise<{ revertSha: string; revertedSha: string }> {
-  return withLock(dir, async () => {
-    if (await isStoreDirty(dir)) {
-      throw new TasksError(
-        "STORE_DIRTY",
-        "store working tree is dirty; commit or discard pending changes before running mutating commands",
-        {}
-      );
-    }
-
+  return withTransaction(dir, { requireClean: true }, async () => {
     const head = await gitCapture(dir, ["rev-parse", "HEAD"]);
     const root = await gitCapture(dir, ["rev-list", "--max-parents=0", "HEAD"]);
 
