@@ -125,6 +125,18 @@ _Avoid_: error message, exception, failure object.
 The default 7-day window applied to `done` Tasks in `list` and `board`: Tasks whose `updated_at` is older are hidden unless `--all` or `--since <duration>` is passed.
 _Avoid_: filter, expiry.
 
+**Export**:
+The whole-Store JSON dump emitted by `tasks export --json`, intended as a single-call read for agents. Includes every live-Column Task (frontmatter + Body + parsed Acceptance Criteria), the reverse-Dep index, the Store HEAD commit SHA, and the schema version. Archived Tasks are excluded by default; any Archived Task referenced as a Dep by a live Task is included as an Archive Stub. Ordered by Column (fixed order), then by `created_at` ascending. `--include-archived` opts the full Archive in.
+_Avoid_: dump, snapshot, backup.
+
+**Archive Stub**:
+The minimal Task record (`{ id, uuid, title, column: "archive", complete: true }`, no Body, no Acceptance Criteria) emitted by Export for any Archived Task that is still referenced as a Dep by a live Task. Preserves Dep-graph completeness without dragging Archive content into the payload.
+_Avoid_: archived stub, dep stub, ghost.
+
+**Summary**:
+The compact Store digest emitted by `tasks summary --json`: per-Column counts, the last 10 Tasks by `updated_at` ("recent"), and live-Column Tasks (`doing`/`blocked`/`review`) untouched for 14+ days ("stale"). A separate command from Export, with its own envelope (no `tasks` array). Thresholds overridable via `--recent N` and `--stale <duration>`.
+_Avoid_: digest, overview, status.
+
 **Mutating command**:
 A CLI invocation that writes to the Store. Takes the Lock, runs the Validator, and produces exactly one git commit on success. May trigger Auto-init. Refuses to run against a Dirty tree, except for `tasks edit`.
 _Avoid_: write command, mutator, mutation.
