@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import pkg from "../package.json" with { type: "json" };
 import { USAGE } from "./cli/usage.ts";
 import { run as newCmd } from "./commands/new.ts";
 import { run as showCmd } from "./commands/show.ts";
@@ -42,6 +43,11 @@ const [command, ...rest] = process.argv.slice(2);
 
 if (command === "help" || command === "--help" || command === "-h") {
   process.stdout.write(USAGE);
+  process.exit(0);
+}
+
+if (command === "version" || command === "--version" || command === "-V") {
+  process.stdout.write(`${pkg.version}\n`);
   process.exit(0);
 }
 

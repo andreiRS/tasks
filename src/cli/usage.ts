@@ -39,10 +39,12 @@ Commands:
                           Compact Store digest: per-column counts, recent tasks,
                           and stale tasks in doing/blocked/review.
   help                    Show this message.
+  version                 Print the CLI version.
 
 Global flags:
   --json                  Emit machine-readable JSON instead of human output.
   -h, --help              Show this message.
+  -V, --version           Print the CLI version.
 
 Store location: \$TASKS_HOME/projects/<encoded-cwd>/ (default \$HOME/.tasks).
 `;
