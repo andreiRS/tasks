@@ -1,0 +1,112 @@
+name: release
+
+# Builds standalone binaries for macOS and Linux when a `v*` tag is pushed,
+# then creates a GitHub release and attaches them. Cut a release by tagging:
+#
+#   git tag v0.1.0
+#   git push origin v0.1.0
+#
+# The tag must match the `version` field in `package.json`; the build step
+# verifies this and fails fast on mismatch so a release cannot ship with a
+# stale version baked into the binary.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: darwin-arm64
+            bun_target: bun-darwin-arm64
+          - os: macos-13
+            target: darwin-x64
+            bun_target: bun-darwin-x64
+          - os: ubuntu-latest
+            target: linux-x64
+            bun_target: bun-linux-x64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            bun_target: bun-linux-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run tests
+        run: bun test
+
+      - name: Build standalone binary
+        run: bun build --compile --target=${{ matrix.bun_target }} ./src/cli.ts --outfile=dist/tasks-${{ matrix.target }}
+
+      - name: Smoke-test the binary
+        if: matrix.target == 'darwin-arm64' || matrix.target == 'linux-x64'
+        run: |
+          ./dist/tasks-${{ matrix.target }} --version
+          ./dist/tasks-${{ matrix.target }} --help > /dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tasks-${{ matrix.target }}
+          path: dist/tasks-${{ matrix.target }}
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          awk -v tag="$TAG" '
+            $0 ~ "^## \\[" tag "\\]" { capture=1; next }
+            capture && /^## \[/ { exit }
+            capture { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "no changelog entry found for $TAG; using fallback"
+            echo "Release $GITHUB_REF_NAME" > release-notes.md
+          fi
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: release-notes.md
+          files: dist/tasks-*
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

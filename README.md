@@ -2,7 +2,7 @@
 
 A git-backed, file-per-task CLI for tracking work across six columns, designed so humans and Claude Code agents drive the same surface. Each task is a markdown file with YAML frontmatter, kept in a per-project git repository under `$TASKS_HOME`. Every mutation is an atomic commit, so the history is the audit log.
 
-> **Status:** M1 through M9 are complete. M10 (Ship polish pass) is in progress. The store, validator (schema + DAG rules), all read commands (`show`, `list`, `board`, `next`), and all write commands (`init`, `new`, `mv`, `edit`, `set`, `link`, `unlink`, `rm`, `undo`) are live. See [MILESTONES.md](./MILESTONES.md) for the full delivery plan and per-milestone status.
+> **Status:** v0.1.0 — first versioned release. M1 through M9 are complete. The store, validator (schema + DAG rules), all read commands (`show`, `list`, `board`, `next`, `export`, `summary`), and all write commands (`init`, `new`, `mv`, `edit`, `set`, `link`, `unlink`, `rm`, `undo`, `archive`) are live. See [CHANGELOG.md](./CHANGELOG.md) for the release history and [MILESTONES.md](./MILESTONES.md) for the delivery plan.
 
 ## Why
 
@@ -164,6 +164,22 @@ Print the oldest task in `ready/` whose deps are all in `done/`.
 
 Exits non-zero with `NO_READY_TASK` if no candidate exists.
 
+### `tasks export --json [--include-archived] [--columns <col,col,...>]`
+
+Whole-Store JSON dump intended for agents. One call returns the full live store with everything an agent needs to plan: frontmatter, body, parsed `acceptance_criteria`, forward and reverse deps, the HEAD commit SHA, and a `schema_version`. Tasks are grouped by Column in fixed order (`backlog → ready → doing → blocked → review → done`) and sorted by `created_at` ascending within each group, so successive exports diff cleanly.
+
+Archived Tasks are excluded by default, but any Archived Task referenced as a Dep by a live Task is included as an **Archive Stub** (`{ id, uuid, title, column: "archive", complete: true }`) so the dep graph is never dangling. `--include-archived` emits the full archive (with bodies) as a seventh group. `--columns ready,doing` narrows the live set; stubs still appear for archived deps of the in-scope tasks. `--json` is required (a future human format may land later). See [ADR-0011](./docs/adr/0011-export-shape-and-defaults.md).
+
+### `tasks summary --json [--recent <N>] [--stale <Nd>]`
+
+Compact Store digest for "what's going on right now?" without dumping every task. Separate envelope from `export`: there is no `tasks` array. Returns:
+
+- `counts`: per-Column task counts plus an `archive` count.
+- `recent`: the last 10 live Tasks by `updated_at` (newest first). Minimal stub per entry (`id`, `uuid`, `title`, `column`, `updated_at`). Archive excluded.
+- `stale`: live Tasks in `doing`/`blocked`/`review` whose `updated_at` is older than 14 days. Same minimal stub shape. Sorted oldest first. Backlog is allowed to sit; done/archive don't count.
+
+`--recent N` overrides the 10-task default; `--stale <duration>` overrides the 14-day threshold. `--json` is required.
+
 ## Safety rails
 
 - **flock**: every mutating command takes an exclusive lock on the store. Concurrent invocations serialize. Missing `flock` on `$PATH` emits `FLOCK_MISSING` with the install hint.
@@ -188,7 +204,7 @@ Codes: `CONFLICT`, `CYCLE_DETECTED`, `DEP_EXISTS`, `EDITOR_FAILED`, `FLOCK_MISSI
 
 ## JSON output
 
-All read commands (`show`, `list`, `board`, `next`) and all mutating commands (`init`, `new`, `mv`, `edit`, `set`, `link`, `unlink`, `rm`, `undo`) accept `--json`. Errors always use the envelope above. Success shapes per command:
+All read commands (`show`, `list`, `board`, `next`, `export`, `summary`) and all mutating commands (`init`, `new`, `mv`, `edit`, `set`, `link`, `unlink`, `rm`, `undo`, `archive`) accept `--json`. `export` and `summary` *require* it. Errors always use the envelope above. Success shapes per command:
 
 | Command | Success shape |
 |---------|--------------|
@@ -196,6 +212,8 @@ All read commands (`show`, `list`, `board`, `next`) and all mutating commands (`
 | `list` | Array of task objects |
 | `board` | `{ backlog: [...], ready: [...], doing: [...], blocked: [...], review: [...], done: [...] }` |
 | `next` | Single task object, or non-zero + `NO_READY_TASK` if none |
+| `export` | `{ ok: true, schema_version, head_sha, tasks: [...], reverse_deps: {...} }` |
+| `summary` | `{ ok: true, schema_version, head_sha, counts: {...}, recent: [...], stale: [...] }` |
 | `init` | `{ ok: true, path, created }` (`created: true` on first run) |
 | `new` | Plain text `task: new #id - title` (errors use JSON envelope) |
 | `mv` | `{ ok: true, id, uuid, from, to }` |
