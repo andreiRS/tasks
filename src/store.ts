@@ -250,6 +250,21 @@ export async function isStoreDirty(dir: string): Promise<boolean> {
   return out.trim().length > 0;
 }
 
+export interface CreateTaskOptions {
+  attendance?: "attended" | "unattended";
+  effort?: "low" | "medium" | "high";
+  /** UUIDs of tasks this task depends on (already resolved and validated by caller). */
+  deps?: string[];
+  /** Body text to write after the frontmatter. */
+  body?: string;
+  /**
+   * Optional editor runner. When provided, the editor is opened on the task
+   * file after creation and the file is re-validated/recommitted if changed.
+   * Returns the on-disk outcome for the caller.
+   */
+  runEditor?: EditorRunner;
+}
+
 /**
  * Create a new task in the store.
  * Allocates an ID from meta.yaml, writes the task file to backlog/,
@@ -257,7 +272,7 @@ export async function isStoreDirty(dir: string): Promise<boolean> {
  *
  * Returns the short id of the new task.
  */
-export async function createTask(dir: string, title: string): Promise<number> {
+export async function createTask(dir: string, title: string, opts: CreateTaskOptions = {}): Promise<number> {
   return withLock(dir, async () => {
     // Reject if any existing task file carries an invalid enum value.
     validateEnums(dir);
@@ -280,18 +295,23 @@ export async function createTask(dir: string, title: string): Promise<number> {
     const filename = `${id}-${slug}.md`;
     const taskPath = join(dir, "backlog", filename);
 
+    const attendance = opts.attendance ?? DEFAULT_ATTENDANCE;
+    const effort = opts.effort ?? DEFAULT_EFFORT;
+    const deps = opts.deps ?? [];
+    const body = opts.body ?? "";
+
     const frontmatter = yamlStringify({
       id,
       uuid,
       title,
-      deps: [],
-      attendance: DEFAULT_ATTENDANCE,
-      effort: DEFAULT_EFFORT,
+      deps,
+      attendance,
+      effort,
       created_at: now,
       updated_at: now,
     });
 
-    const fileContent = `---\n${frontmatter}---\n`;
+    const fileContent = `---\n${frontmatter}---\n${body}`;
     writeFileSync(taskPath, fileContent, "utf-8");
 
     // Update meta.yaml
@@ -301,6 +321,58 @@ export async function createTask(dir: string, title: string): Promise<number> {
     const taskRelPath = `backlog/${filename}`;
     await git(["add", taskRelPath, "meta.yaml"], dir);
     await git(["commit", "-m", `task: new #${id} — ${title}`], dir);
+
+    // If an editor runner was provided, open the editor on the newly created
+    // file. This mirrors `tasks edit` behavior: validate + commit on change,
+    // noop on unchanged, throw on invalid.
+    if (opts.runEditor) {
+      const before = readFileSync(taskPath, "utf-8");
+
+      let exit: number;
+      try {
+        exit = await opts.runEditor(taskPath);
+      } catch (err) {
+        throw new TasksError(
+          "EDITOR_FAILED",
+          `editor failed: ${err instanceof Error ? err.message : String(err)}`,
+          {},
+        );
+      }
+      if (exit !== 0) {
+        throw new TasksError("EDITOR_FAILED", `editor exited with code ${exit}`, { exit });
+      }
+
+      const after = readFileSync(taskPath, "utf-8");
+      if (after !== before) {
+        // Parse and validate. Bad title -> leave file as-is, throw.
+        const parts = after.split(/^---\s*$/m);
+        if (parts.length < 3) {
+          throw new TasksError("INVALID_TITLE", "task file is missing YAML frontmatter", {});
+        }
+        let fm: Record<string, unknown>;
+        try {
+          fm = yamlParse(parts[1]) as Record<string, unknown>;
+        } catch (err) {
+          throw new TasksError(
+            "INVALID_TITLE",
+            `invalid YAML frontmatter: ${err instanceof Error ? err.message : String(err)}`,
+            {},
+          );
+        }
+        const titleErr = validateTitle(fm.title);
+        if (titleErr !== null) {
+          throw new TasksError("INVALID_TITLE", titleErr, {});
+        }
+
+        // Bump updated_at
+        const editNow = new Date().toISOString();
+        const bumped = after.replace(/^(updated_at:\s*)(.+)$/m, `$1${editNow}`);
+        writeFileSync(taskPath, bumped, "utf-8");
+
+        await git(["add", taskRelPath], dir);
+        await git(["commit", "-m", `task: edit #${id}`], dir);
+      }
+    }
 
     return id;
   });

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
-import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, editTask, abortPendingEdits, linkTask, unlinkTask, TasksError, COLUMNS, type TaskData } from "./store.ts";
+import { storeDir, ensureStore, createTask, isStoreDirty, resolveStoreDir, findTask, findAllTasks, groupTasksByColumn, findFlockOrFail, moveTask, removeTask, editTask, abortPendingEdits, linkTask, unlinkTask, TasksError, COLUMNS, type TaskData, type EditorRunner } from "./store.ts";
 import { renderTask, renderList, renderBoard } from "./render.ts";
 
 /**
@@ -78,7 +78,73 @@ const [command, ...rest] = args;
 
 if (command === "new") {
   const jsonFlag = rest.includes("--json");
-  const title = rest.find((a) => a !== "--json") ?? "";
+  const unattendedFlag = rest.includes("--unattended");
+  const editFlag = rest.includes("--edit");
+
+  // Parse --effort <value>
+  let effortValue: string | undefined;
+  const effortIdx = rest.indexOf("--effort");
+  if (effortIdx !== -1 && effortIdx + 1 < rest.length) {
+    effortValue = rest[effortIdx + 1];
+  }
+
+  // Parse --deps <id|uuid> (repeatable)
+  const depRefs: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "--deps" && i + 1 < rest.length) {
+      depRefs.push(rest[i + 1]);
+      i++;
+    }
+  }
+
+  // Parse --body - flag
+  let bodyFromStdin = false;
+  const bodyIdx = rest.indexOf("--body");
+  if (bodyIdx !== -1 && bodyIdx + 1 < rest.length && rest[bodyIdx + 1] === "-") {
+    bodyFromStdin = true;
+  }
+
+  // --edit and --body - are mutually exclusive
+  if (editFlag && bodyFromStdin) {
+    const msg = "--edit and --body - are mutually exclusive; use one or the other";
+    if (jsonFlag) {
+      writeJsonError("CONFLICT", msg, {});
+    } else {
+      process.stderr.write(`tasks: CONFLICT: ${msg}\n`);
+    }
+    process.exit(1);
+  }
+
+  // Validate --effort value early (before any store/git work)
+  if (effortValue !== undefined) {
+    const validEffort = ["low", "medium", "high"];
+    if (!validEffort.includes(effortValue)) {
+      const msg = `invalid --effort value: ${effortValue}. Allowed: low, medium, high`;
+      if (jsonFlag) {
+        writeJsonError("INVALID_EFFORT", msg, { value: effortValue, allowed: validEffort });
+      } else {
+        process.stderr.write(`tasks: INVALID_EFFORT: ${msg}\n`);
+      }
+      process.exit(1);
+    }
+  }
+
+  // Collect the title: first positional argument that isn't a flag or flag value
+  const knownFlags = new Set(["--json", "--unattended", "--edit"]);
+  const flagsWithValues = new Set(["--effort", "--deps", "--body"]);
+  const titleArgs: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (knownFlags.has(a)) continue;
+    if (flagsWithValues.has(a)) {
+      i++; // skip the value too
+      continue;
+    }
+    if (a.startsWith("--")) continue; // unknown flag, skip
+    titleArgs.push(a);
+  }
+  const title = titleArgs[0] ?? "";
+
   const titleError = validateTitle(title);
   if (titleError !== null) {
     process.stderr.write(`tasks: INVALID_TITLE: ${titleError}\n`);
@@ -117,8 +183,81 @@ if (command === "new") {
     process.exit(1);
   }
 
-  const id = await createTask(dir, title);
-  process.stdout.write(`task: new #${id} — ${title}\n`);
+  // Resolve --deps refs to UUIDs (need the store to exist for this)
+  const resolvedDepUuids: string[] = [];
+  if (depRefs.length > 0) {
+    const allTasks = findAllTasks(dir);
+    const byUuid = new Map(allTasks.map((t: TaskData) => [t.uuid, t]));
+    const byId = new Map(allTasks.map((t: TaskData) => [t.id, t]));
+    for (const ref of depRefs) {
+      let found: TaskData | undefined;
+      if (/^\d+$/.test(ref)) {
+        found = byId.get(parseInt(ref, 10));
+      } else {
+        found = byUuid.get(ref);
+      }
+      if (!found) {
+        const msg = `dep not found: ${ref}`;
+        if (jsonFlag) {
+          writeJsonError("UNKNOWN_UUID", msg, { uuid: ref });
+        } else {
+          process.stderr.write(`tasks: UNKNOWN_UUID: ${msg}\n`);
+        }
+        process.exit(1);
+      }
+      resolvedDepUuids.push(found.uuid);
+    }
+  }
+
+  // Read body from stdin if --body - was passed
+  let bodyContent: string | undefined;
+  if (bodyFromStdin) {
+    bodyContent = await new Response(Bun.stdin.stream()).text();
+  }
+
+  // Build editor runner if --edit was passed
+  let editorRunner: EditorRunner | undefined;
+  if (editFlag) {
+    const editorEnv = process.env.EDITOR ?? process.env.VISUAL;
+    if (!editorEnv || editorEnv.trim() === "") {
+      const msg = "$EDITOR is not set; set EDITOR to your editor (e.g. vim, nano) and retry";
+      if (jsonFlag) {
+        writeJsonError("NO_EDITOR", msg, {});
+      } else {
+        writePlainError(`NO_EDITOR: ${msg}`);
+      }
+      process.exit(1);
+    }
+    editorRunner = async (filePath: string) => {
+      const proc = Bun.spawn(["sh", "-c", `${editorEnv} "$1"`, "sh", filePath], {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      return await proc.exited;
+    };
+  }
+
+  try {
+    const id = await createTask(dir, title, {
+      attendance: unattendedFlag ? "unattended" : undefined,
+      effort: effortValue as "low" | "medium" | "high" | undefined,
+      deps: resolvedDepUuids.length > 0 ? resolvedDepUuids : undefined,
+      body: bodyContent,
+      runEditor: editorRunner,
+    });
+    process.stdout.write(`task: new #${id} — ${title}\n`);
+  } catch (err) {
+    if (err instanceof TasksError) {
+      if (jsonFlag) {
+        writeJsonError(err.code, err.message, err.details);
+      } else {
+        writePlainError(`${err.code}: ${err.message}`);
+      }
+      process.exit(1);
+    }
+    throw err;
+  }
 } else if (command === "show") {
   // Determine whether --json was passed and get the id/uuid argument
   const jsonFlag = rest.includes("--json");
