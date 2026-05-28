@@ -1005,6 +1005,120 @@ if (command === "new") {
     }
     throw err;
   }
+} else if (command === "next") {
+  const jsonFlag = rest.includes("--json");
+  const noColorFlag = rest.includes("--no-color");
+  const unattendedFlag = rest.includes("--unattended");
+
+  function shouldColor(): boolean {
+    if (noColorFlag) return false;
+    if (process.env.NO_COLOR !== undefined && process.env.NO_COLOR !== "") return false;
+    if (process.env.FORCE_COLOR === "1") return true;
+    return Boolean(process.stdout.isTTY);
+  }
+
+  // Parse --attendance <value>
+  let attendanceFilter: string | undefined;
+  const attendanceIdx = rest.indexOf("--attendance");
+  if (attendanceIdx !== -1 && attendanceIdx + 1 < rest.length) {
+    attendanceFilter = rest[attendanceIdx + 1];
+  }
+
+  // Conflict: --attendance attended and --unattended are contradictory
+  if (unattendedFlag && attendanceFilter !== undefined && attendanceFilter !== "unattended") {
+    const msg = `conflict: --unattended and --attendance ${attendanceFilter} are contradictory; --unattended means --attendance unattended`;
+    if (jsonFlag) {
+      writeJsonError("CONFLICT", msg, { unattended: true, attendance: attendanceFilter });
+    } else {
+      writePlainError(`CONFLICT: ${msg}`);
+    }
+    process.exit(1);
+  }
+
+  // Validate --attendance enum value (if provided and not already caught above)
+  if (attendanceFilter !== undefined) {
+    const validAttendance = ["attended", "unattended"];
+    if (!validAttendance.includes(attendanceFilter)) {
+      const msg = `invalid --attendance value: ${attendanceFilter}. Allowed: ${validAttendance.join(", ")}`;
+      if (jsonFlag) {
+        writeJsonError("INVALID_ATTENDANCE", msg, { value: attendanceFilter, allowed: validAttendance });
+      } else {
+        writePlainError(`INVALID_ATTENDANCE: ${msg}`);
+      }
+      process.exit(1);
+    }
+  }
+
+  // Resolve effective attendance filter: --unattended is shorthand for --attendance unattended
+  const effectiveAttendance: string | undefined = unattendedFlag ? "unattended" : attendanceFilter;
+
+  // Read-only: do NOT auto-init. If no store, return NO_READY_TASK.
+  const dir = resolveStoreDir(process.cwd());
+
+  if (!existsSync(dir)) {
+    const msg = "no ready task found";
+    if (jsonFlag) {
+      writeJsonError("NO_READY_TASK", msg, {});
+    } else {
+      writePlainError(`NO_READY_TASK: ${msg}`);
+    }
+    process.exit(1);
+  }
+
+  // Load all tasks; we need the full store to check dep completion
+  const allTasks = findAllTasks(dir);
+  const doneUuids = new Set(
+    allTasks.filter((t) => t.column === "done").map((t) => t.uuid)
+  );
+
+  // Candidates: in ready/, all deps in done/
+  let candidates = allTasks.filter((t) => {
+    if (t.column !== "ready") return false;
+    // Every dep must be in done/ (review/ does NOT count)
+    return t.deps.every((depUuid) => doneUuids.has(depUuid));
+  });
+
+  // Apply optional attendance filter
+  if (effectiveAttendance !== undefined) {
+    candidates = candidates.filter((t) => t.attendance === effectiveAttendance);
+  }
+
+  if (candidates.length === 0) {
+    const msg = "no ready task found";
+    if (jsonFlag) {
+      writeJsonError("NO_READY_TASK", msg, {});
+    } else {
+      writePlainError(`NO_READY_TASK: ${msg}`);
+    }
+    process.exit(1);
+  }
+
+  // Pick the oldest by created_at; tie-break by id ascending
+  candidates.sort((a, b) => {
+    const tA = new Date(a.created_at).getTime();
+    const tB = new Date(b.created_at).getTime();
+    if (tA !== tB) return tA - tB;
+    return a.id - b.id;
+  });
+
+  const task = candidates[0];
+
+  // Compute forward and reverse dependency edges (same as tasks show)
+  const byUuid = new Map<string, TaskData>(allTasks.map((t) => [t.uuid, t]));
+  const deps_out = task.deps
+    .map((u) => byUuid.get(u))
+    .filter((t): t is TaskData => t !== undefined)
+    .map((t) => ({ uuid: t.uuid, id: t.id, title: t.title }));
+  const deps_in = allTasks
+    .filter((t) => t.deps.includes(task.uuid))
+    .sort((a, b) => a.id - b.id)
+    .map((t) => ({ uuid: t.uuid, id: t.id, title: t.title }));
+
+  if (jsonFlag) {
+    process.stdout.write(JSON.stringify({ ...task, deps_out, deps_in }) + "\n");
+  } else {
+    process.stdout.write(renderTask(task, { color: shouldColor(), deps_out, deps_in }));
+  }
 }
 
 process.exit(0);
