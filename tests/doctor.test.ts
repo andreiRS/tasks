@@ -1,5 +1,13 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  mkdirSync,
+  writeFileSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -110,6 +118,140 @@ test("tasks doctor: does not auto-create a missing store; exits 0 with a sensibl
   if (existsSync(projectsDir)) {
     expect(readdirSync(projectsDir)).toHaveLength(0);
   }
+});
+
+async function git(store: string, args: string[]): Promise<{ code: number; stdout: string }> {
+  const proc = Bun.spawn(["git", "-C", store, ...args], { stdout: "pipe", stderr: "pipe" });
+  const code = await proc.exited;
+  const stdout = await new Response(proc.stdout).text();
+  return { code, stdout };
+}
+
+test("tasks doctor --clean: untracked stray is stashed, tree clean, ref + path printed, exit 0", async () => {
+  const init = await runCli(["init"]);
+  expect(init.exitCode).toBe(0);
+
+  const store = storePath();
+  writeFileSync(join(store, "stray.md"), "stray-content\n", "utf-8");
+
+  const { exitCode, stdout } = await runCli(["doctor", "--clean"]);
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain("stash@{0}");
+  expect(stdout).toContain(store);
+
+  // Tree is now clean.
+  const status = await git(store, ["status", "--short"]);
+  expect(status.stdout.trim()).toBe("");
+
+  // Stray is recoverable via stash pop.
+  const pop = await git(store, ["stash", "pop"]);
+  expect(pop.code).toBe(0);
+  expect(existsSync(join(store, "stray.md"))).toBe(true);
+  expect(readFileSync(join(store, "stray.md"), "utf-8")).toBe("stray-content\n");
+});
+
+test("tasks doctor --clean: modified tracked file is stashed (restored to HEAD), recoverable", async () => {
+  const init = await runCli(["init"]);
+  expect(init.exitCode).toBe(0);
+  // Create a task so we have a tracked file to modify.
+  const created = await runCli(["new", "trackme"]);
+  expect(created.exitCode).toBe(0);
+
+  const store = storePath();
+  // Find a tracked .md file under the store and modify it.
+  const lsFiles = await git(store, ["ls-files"]);
+  const tracked = lsFiles.stdout.split("\n").filter((l) => l.endsWith(".md"))[0];
+  expect(tracked).toBeTruthy();
+  const trackedPath = join(store, tracked);
+  const original = readFileSync(trackedPath, "utf-8");
+  writeFileSync(trackedPath, original + "\nLOCAL EDIT\n", "utf-8");
+
+  const { exitCode, stdout } = await runCli(["doctor", "--clean"]);
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain("stash@{0}");
+
+  // File restored to HEAD content.
+  expect(readFileSync(trackedPath, "utf-8")).toBe(original);
+  const status = await git(store, ["status", "--short"]);
+  expect(status.stdout.trim()).toBe("");
+
+  // Recoverable.
+  const pop = await git(store, ["stash", "pop"]);
+  expect(pop.code).toBe(0);
+  expect(readFileSync(trackedPath, "utf-8")).toBe(original + "\nLOCAL EDIT\n");
+});
+
+test("tasks doctor --clean: mix of modified + untracked + classic editor strays captured in one stash", async () => {
+  const init = await runCli(["init"]);
+  expect(init.exitCode).toBe(0);
+  const created = await runCli(["new", "mix"]);
+  expect(created.exitCode).toBe(0);
+
+  const store = storePath();
+  const lsFiles = await git(store, ["ls-files"]);
+  const tracked = lsFiles.stdout.split("\n").filter((l) => l.endsWith(".md"))[0];
+  const trackedPath = join(store, tracked);
+  const original = readFileSync(trackedPath, "utf-8");
+  writeFileSync(trackedPath, original + "\nedit\n", "utf-8");
+  writeFileSync(join(store, "stray.md"), "stray\n", "utf-8");
+  writeFileSync(join(store, "draft.md.swp"), "swap\n", "utf-8");
+
+  const stashesBefore = await git(store, ["stash", "list"]);
+  const beforeCount = stashesBefore.stdout.split("\n").filter((l) => l.length > 0).length;
+
+  const { exitCode } = await runCli(["doctor", "--clean"]);
+  expect(exitCode).toBe(0);
+
+  const stashesAfter = await git(store, ["stash", "list"]);
+  const afterCount = stashesAfter.stdout.split("\n").filter((l) => l.length > 0).length;
+  expect(afterCount).toBe(beforeCount + 1);
+
+  const status = await git(store, ["status", "--short"]);
+  expect(status.stdout.trim()).toBe("");
+
+  // One stash pop restores all three.
+  const pop = await git(store, ["stash", "pop"]);
+  expect(pop.code).toBe(0);
+  expect(readFileSync(trackedPath, "utf-8")).toBe(original + "\nedit\n");
+  expect(existsSync(join(store, "stray.md"))).toBe(true);
+  expect(existsSync(join(store, "draft.md.swp"))).toBe(true);
+});
+
+test("tasks doctor --clean: already-clean store prints 'store already clean', no stash, exit 0", async () => {
+  const init = await runCli(["init"]);
+  expect(init.exitCode).toBe(0);
+
+  const store = storePath();
+  const before = await git(store, ["stash", "list"]);
+  const beforeCount = before.stdout.split("\n").filter((l) => l.length > 0).length;
+
+  const { exitCode, stdout } = await runCli(["doctor", "--clean"]);
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain("store already clean");
+
+  const after = await git(store, ["stash", "list"]);
+  const afterCount = after.stdout.split("\n").filter((l) => l.length > 0).length;
+  expect(afterCount).toBe(beforeCount);
+});
+
+test("tasks doctor --clean: after clearing dirty tree, follow-up `tasks new` succeeds (no STORE_DIRTY)", async () => {
+  const init = await runCli(["init"]);
+  expect(init.exitCode).toBe(0);
+
+  const store = storePath();
+  writeFileSync(join(store, "stray.md"), "stray\n", "utf-8");
+
+  // Sanity: mutating command refuses while dirty.
+  const dirtyNew = await runCli(["new", "blocked"]);
+  expect(dirtyNew.exitCode).not.toBe(0);
+  expect(dirtyNew.stderr).toContain("STORE_DIRTY");
+
+  const clean = await runCli(["doctor", "--clean"]);
+  expect(clean.exitCode).toBe(0);
+
+  const followUp = await runCli(["new", "after-clean"]);
+  expect(followUp.exitCode).toBe(0);
+  expect(followUp.stderr).not.toContain("STORE_DIRTY");
 });
 
 test("tasks --help: lists `doctor`", async () => {
