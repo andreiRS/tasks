@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { findAllTasks, findArchivedTasks, groupTasksByColumn, resolveStoreDir, type TaskData } from "../store.ts";
-import { renderBoard, computeBlockedBy } from "../render.ts";
+import { renderBoard, computeBlockedBy, BOARD_DEFAULT_WIDTH } from "../render.ts";
 import { writeJsonError, writePlainError } from "../cli/errors.ts";
 import { shouldColor } from "../cli/color.ts";
 import { applyDoneCutoff, withAcceptanceCriteria } from "../cli/filters.ts";
@@ -62,6 +62,24 @@ export async function run(rest: string[]): Promise<void> {
     }
     process.stdout.write(JSON.stringify(groupedWithAc) + "\n");
   } else {
-    process.stdout.write(renderBoard(grouped, { color: shouldColor(noColorFlag), blockedBy }));
+    process.stdout.write(
+      renderBoard(grouped, { color: shouldColor(noColorFlag), blockedBy, width: resolveBoardWidth() }),
+    );
   }
+}
+
+/**
+ * Resolve the board's horizontal width budget:
+ *   1. `process.stdout.columns` when stdout is a TTY.
+ *   2. else `Number(process.env.COLUMNS)` when it parses to a positive finite number.
+ *   3. else `BOARD_DEFAULT_WIDTH` (120).
+ * Kept in the command so `renderBoard` stays a pure function of its inputs.
+ */
+function resolveBoardWidth(): number {
+  if (process.stdout.isTTY && typeof process.stdout.columns === "number") {
+    return process.stdout.columns;
+  }
+  const env = Number(process.env.COLUMNS);
+  if (Number.isFinite(env) && env > 0) return env;
+  return BOARD_DEFAULT_WIDTH;
 }

@@ -15,22 +15,17 @@ export interface RenderOptions {
   deps_in?: Array<{ uuid: string; id: number; title: string }>;
   /**
    * Per-task unresolved direct blocker short ids, keyed by task uuid.
-   * When provided and the array for a task is non-empty, a trailing
-   * `[blocked by #N,#M]` marker is appended after the O·M cluster.
+   * When provided and the array for a task is non-empty, the board renders a
+   * right-pinned `← #N` dependency arrow on that task's row.
    * Ids in each array are assumed already sorted ascending.
    */
   blockedBy?: Map<string, number[]>;
-}
-
-/**
- * Format the trailing `[blocked by #N,#M]` marker for a task, or an empty
- * string when the task has no unresolved blockers (or no lookup was provided).
- */
-function blockedByMarker(task: TaskData, map: Map<string, number[]> | undefined): string {
-  if (!map) return "";
-  const ids = map.get(task.uuid);
-  if (!ids || ids.length === 0) return "";
-  return ` [blocked by ${ids.map((n) => `#${n}`).join(",")}]`;
+  /**
+   * Resolved horizontal width budget for the board layout. The COMMAND resolves
+   * this (TTY columns → COLUMNS env → 120) and passes it in; the renderer never
+   * reads `process` directly, keeping it a pure function of (grouped, options).
+   */
+  width?: number;
 }
 
 /**
@@ -75,18 +70,6 @@ const ANSI = {
  */
 function style(s: string, code: string, color: boolean): string {
   return color ? `${code}${s}${ANSI.reset}` : s;
-}
-
-/**
- * Build a compact glyph cluster showing attendance and effort.
- * attendance: `○` = attended, `●` = unattended
- * effort:     `·L` = low, `·M` = medium, `·H` = high
- */
-function glyphs(task: TaskData): string {
-  const attendanceGlyph = task.attendance === "unattended" ? "●" : "○";
-  const effortMap: Record<string, string> = { low: "·L", medium: "·M", high: "·H" };
-  const effortGlyph = effortMap[task.effort] ?? "·M";
-  return `${attendanceGlyph}${effortGlyph}`;
 }
 
 /**
@@ -211,36 +194,150 @@ export function renderList(tasks: TaskData[], options: RenderOptions): string {
   return lines.join("\n") + "\n";
 }
 
+// ─── Board layout (see docs/specs/board-rendering.md) ────────────────────────
+
+// Lifecycle order of lanes, left to right.
+const BOARD_LANE_ORDER = ["backlog", "ready", "doing", "blocked", "review", "done"];
+// Lane separator: space, single-pipe vertical rule, space (3 cols).
+const BOARD_SEP = " │ ";
+// Fixed lane content widths.
+const BOARD_BACKLOG_W = 36; // populated backlog
+const BOARD_OTHER_W = 24; // any other populated lane
+const BOARD_EMPTY_W = 11; // any lane with 0 tasks (slim); holds "BACKLOG (0)"
+// Reuse the list view's 2-space field gap and 6-col "[auto]" gutter.
+const BOARD_GAP = LIST_GAP;
+const BOARD_GUTTER_W = LIST_GUTTER_W;
+// Minimum title field width when reserves squeeze the lane.
+const BOARD_TITLE_MIN = 4;
+// Default width budget when neither a TTY nor COLUMNS is available.
+export const BOARD_DEFAULT_WIDTH = 120;
+
+/** Fixed content width for a lane given its column name and task count. */
+function laneWidth(col: string, count: number): number {
+  if (count === 0) return BOARD_EMPTY_W;
+  return col === "backlog" ? BOARD_BACKLOG_W : BOARD_OTHER_W;
+}
+
+/** Pad (or hard-truncate) a plain string to exactly `w` display columns. */
+function padCell(s: string, w: number): string {
+  if (s.length > w) return s.slice(0, w);
+  return s.padEnd(w, " ");
+}
+
 /**
- * Render a board view as stacked sections: one section per column in canonical
- * order. Each section shows the column name as a header, then one task per line
- * as `  #<id> <title>`. Empty columns show `  (empty)`.
+ * Render a single lane (header, rule, body rows) as an array of fixed-width
+ * plain-text cells, each exactly `w` columns wide. The header text is the only
+ * styled fragment; styling never changes the cell's display width, so columns
+ * stay aligned under both `--color` and plain output.
+ */
+function renderLane(
+  col: string,
+  tasks: TaskData[],
+  blockedBy: Map<string, number[]> | undefined,
+  color: boolean,
+): string[] {
+  const w = laneWidth(col, tasks.length);
+  const headerText = `${col.toUpperCase()} (${tasks.length})`;
+
+  // Header cell: pad the PLAIN text to width, then style only the text span so
+  // the trailing pad is never wrapped in escape codes.
+  const headerCell =
+    style(headerText, ANSI.bold, color) + " ".repeat(Math.max(0, w - headerText.length));
+  const ruleCell = "─".repeat(w);
+
+  const cells: string[] = [headerCell, ruleCell];
+
+  if (tasks.length === 0) {
+    cells.push(padCell("no tasks", w));
+    return cells;
+  }
+
+  const ordered = [...tasks].sort((a, b) => a.id - b.id);
+
+  const idW = Math.max(...ordered.map((t) => `#${t.id}`.length));
+  const anyUnattended = ordered.some((t) => t.attendance === "unattended");
+  const depsFor = (t: TaskData) => blockedBy?.get(t.uuid) ?? [];
+  const anyDeps = ordered.some((t) => depsFor(t).length > 0);
+
+  // Per-lane reserves. The arrow tail covers `← #<id>` plus a ` +k` overflow.
+  const arrowReserve = anyDeps ? 2 + idW + 3 : 0;
+  const gutterCost = anyUnattended ? BOARD_GUTTER_W + BOARD_GAP : 0;
+  const arrowCost = anyDeps ? BOARD_GAP + arrowReserve : 0;
+  const titleW = Math.max(BOARD_TITLE_MIN, w - idW - BOARD_GAP - gutterCost - arrowCost);
+
+  for (const task of ordered) {
+    const idPlain = `#${task.id}`.padEnd(idW, " ");
+    const id = style(idPlain, ANSI.bold, color);
+
+    const gutter = anyUnattended
+      ? (task.attendance === "unattended" ? "[auto]" : " ".repeat(BOARD_GUTTER_W)) +
+        " ".repeat(BOARD_GAP)
+      : "";
+
+    const titleText = fitTitle(task.title, titleW).padEnd(titleW, " ");
+
+    let tail = "";
+    if (anyDeps) {
+      const arrow = boardArrow(depsFor(task));
+      tail = " ".repeat(BOARD_GAP) + arrow.padEnd(arrowReserve, " ");
+    }
+
+    const rowPlain = `${idPlain}${" ".repeat(BOARD_GAP)}${gutter}${titleText}${tail}`;
+    // Trim trailing whitespace, then pad/clamp to exactly the lane width so the
+    // cell owns its slack and never overflows into the next lane.
+    const padded = padCell(rowPlain.replace(/\s+$/, ""), w);
+    // Re-apply the bold id span over the padded plain row (id is at index 0).
+    cells.push(color ? padded.replace(idPlain, id) : padded);
+  }
+
+  return cells;
+}
+
+/**
+ * Format the dependency arrow tail for a board row within `reserve` columns.
+ * A single dep renders `← #N`; multiple deps render `← #first +k` (k = hidden
+ * count). Returns "" when there are no unmet upstream deps.
+ */
+function boardArrow(ids: number[]): string {
+  if (ids.length === 0) return "";
+  if (ids.length === 1) return `← #${ids[0]}`;
+  return `← #${ids[0]} +${ids.length - 1}`;
+}
+
+/**
+ * Render the board as side-by-side lanes in lifecycle order, separated by
+ * ` │ `. Each lane has a header (`NAME (N)` in uniform caps), a `─` rule line
+ * spanning the lane width, then either task rows or the literal `no tasks`.
  *
- * Pinned layout:
- *   backlog
- *     #1 alpha
- *     #2 beta
- *   ready
- *     (empty)
- *   ...
+ * Lane content widths are fixed: populated `backlog` = 36, any other populated
+ * lane = 24, any empty lane = 11 (slim). Task rows carry a per-lane `[auto]`
+ * gutter (only when the lane has an unattended task) and a right-pinned
+ * `← #N` dependency arrow (reserved only when the lane has unmet deps).
+ *
+ * `options.width` is the resolved width budget. This slice renders all six
+ * lanes side-by-side; adaptive dropping and the vertical fallback are not yet
+ * implemented.
  */
 export function renderBoard(grouped: Record<string, TaskData[]>, options: RenderOptions): string {
   const color = options.color === true;
-  const lines: string[] = [];
+  const blockedBy = options.blockedBy;
 
-  for (const col of COLUMNS) {
-    const tasks = grouped[col] ?? [];
-    lines.push(style(col, ANSI.bold, color));
-    if (tasks.length === 0) {
-      lines.push(`  ${style("(empty)", ANSI.dim, color)}`);
-    } else {
-      for (const task of tasks) {
-        const id = style(`#${task.id}`, ANSI.bold, color);
-        const g = style(glyphs(task), ANSI.dim, color);
-        const marker = blockedByMarker(task, options.blockedBy);
-        lines.push(`  ${id} ${task.title}  ${g}${marker}`);
-      }
-    }
+  const laneCells = BOARD_LANE_ORDER.map((col) =>
+    renderLane(col, grouped[col] ?? [], blockedBy, color),
+  );
+
+  const rows = Math.max(...laneCells.map((c) => c.length));
+  const widths = BOARD_LANE_ORDER.map((col) =>
+    laneWidth(col, (grouped[col] ?? []).length),
+  );
+
+  const lines: string[] = [];
+  for (let r = 0; r < rows; r++) {
+    const parts = laneCells.map((cells, i) =>
+      r < cells.length ? cells[r] : " ".repeat(widths[i]),
+    );
+    // Right-trim the assembled line so empty tails carry no trailing spaces.
+    lines.push(parts.join(BOARD_SEP).replace(/\s+$/, ""));
   }
 
   return lines.join("\n") + "\n";

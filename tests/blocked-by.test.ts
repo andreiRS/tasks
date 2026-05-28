@@ -141,60 +141,60 @@ test("list: filters done blockers but keeps unresolved ones in marker", async ()
 
 // ─── board: human output ─────────────────────────────────────────────────────
 
-test("board: row with two unresolved blockers shows [blocked by #1,#2] after O·M", async () => {
+test("board: row with two unresolved blockers shows the ← #1 +1 arrow", async () => {
   await runTasks(["new", "blocker one"]); // #1
   await runTasks(["new", "blocker two"]); // #2
   await runTasks(["new", "subject"]); // #3
   await runTasks(["link", "3", "--depends-on", "1", "--depends-on", "2"]);
 
-  const { exitCode, stdout } = await runTasks(["board", "--no-color"]);
+  const { exitCode, stdout } = await runTasks(["board", "--no-color"], { COLUMNS: "160" });
   expect(exitCode).toBe(0);
 
   const row = findRowById(stdout, 3);
   expect(row).toBeDefined();
-  expect(row!).toContain("[blocked by #1,#2]");
-  const omIdx = row!.search(/[●○]·[LMH]/);
-  const markerIdx = row!.indexOf("[blocked by");
-  expect(omIdx).toBeGreaterThan(-1);
-  expect(markerIdx).toBeGreaterThan(omIdx);
+  expect(row!).toMatch(/← #1 \+1/);
+  expect(row!).not.toContain("[blocked by");
 });
 
-test("board: row with all blockers in done shows no marker", async () => {
+test("board: row with all blockers in done shows no arrow", async () => {
   await runTasks(["new", "blocker"]); // #1
   await runTasks(["new", "subject"]); // #2
   await runTasks(["link", "2", "--depends-on", "1"]);
   await runTasks(["mv", "1", "done"]);
 
-  const { exitCode, stdout } = await runTasks(["board", "--no-color", "--all"]);
+  const { exitCode, stdout } = await runTasks(["board", "--no-color", "--all"], { COLUMNS: "160" });
   expect(exitCode).toBe(0);
 
   const row = findRowById(stdout, 2);
   expect(row).toBeDefined();
+  expect(row!).not.toContain("←");
   expect(row!).not.toContain("[blocked by");
 });
 
-test("board: row in doing with unresolved blocker shows the marker", async () => {
+test("board: row in doing with unresolved blocker shows the ← #1 arrow", async () => {
   await runTasks(["new", "blocker"]); // #1
   await runTasks(["new", "subject"]); // #2
   await runTasks(["link", "2", "--depends-on", "1"]);
   await runTasks(["mv", "2", "doing"]);
 
-  const { exitCode, stdout } = await runTasks(["board", "--no-color"]);
+  const { exitCode, stdout } = await runTasks(["board", "--no-color"], { COLUMNS: "160" });
   expect(exitCode).toBe(0);
 
   const row = findRowById(stdout, 2);
   expect(row).toBeDefined();
-  expect(row!).toContain("[blocked by #1]");
+  expect(row!).toContain("← #1");
+  expect(row!).not.toContain("[blocked by");
 });
 
-test("board: row with no deps shows no marker", async () => {
+test("board: row with no deps shows no arrow", async () => {
   await runTasks(["new", "alone"]);
 
-  const { exitCode, stdout } = await runTasks(["board", "--no-color"]);
+  const { exitCode, stdout } = await runTasks(["board", "--no-color"], { COLUMNS: "160" });
   expect(exitCode).toBe(0);
 
   const row = findRowById(stdout, 1);
   expect(row).toBeDefined();
+  expect(row!).not.toContain("←");
   expect(row!).not.toContain("[blocked by");
 });
 
