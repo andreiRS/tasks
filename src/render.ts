@@ -34,9 +34,21 @@ function style(s: string, code: string, color: boolean): string {
 }
 
 /**
+ * Build a compact glyph cluster showing attendance and effort.
+ * attendance: `○` = attended, `●` = unattended
+ * effort:     `·L` = low, `·M` = medium, `·H` = high
+ */
+function glyphs(task: TaskData): string {
+  const attendanceGlyph = task.attendance === "unattended" ? "●" : "○";
+  const effortMap: Record<string, string> = { low: "·L", medium: "·M", high: "·H" };
+  const effortGlyph = effortMap[task.effort] ?? "·M";
+  return `${attendanceGlyph}${effortGlyph}`;
+}
+
+/**
  * Render a flat list of tasks as a human-readable string.
  *
- * Each task is one line: `#<id>  <column padded>  <title>`
+ * Each task is one line: `#<id>  <column padded>  <title>  <glyphs>`
  * An empty task array renders as a single `(no tasks)` line.
  *
  * When `options.color` is true, the column name is styled with cyan and the
@@ -53,7 +65,8 @@ export function renderList(tasks: TaskData[], options: RenderOptions): string {
   for (const task of tasks) {
     const id = style(`#${task.id}`, ANSI.bold, color);
     const col = style(task.column.padEnd(8, " "), ANSI.cyan, color);
-    lines.push(`${id}  ${col}  ${task.title}`);
+    const g = style(glyphs(task), ANSI.dim, color);
+    lines.push(`${id}  ${col}  ${task.title}  ${g}`);
   }
 
   return lines.join("\n") + "\n";
@@ -84,7 +97,8 @@ export function renderBoard(grouped: Record<string, TaskData[]>, options: Render
     } else {
       for (const task of tasks) {
         const id = style(`#${task.id}`, ANSI.bold, color);
-        lines.push(`  ${id} ${task.title}`);
+        const g = style(glyphs(task), ANSI.dim, color);
+        lines.push(`  ${id} ${task.title}  ${g}`);
       }
     }
   }
@@ -136,6 +150,8 @@ export function renderTask(task: TaskData, options: RenderOptions = {}): string 
 
   lines.push(`${label("agent_ready:")}${task.agent_ready}`);
   lines.push(`${label("human_in_loop:")}${task.human_in_loop}`);
+  lines.push(`${label("Attendance:")}${task.attendance}`);
+  lines.push(`${label("Effort:")}${task.effort}`);
   lines.push(`${label("created_at:")}${task.created_at}`);
   lines.push(`${label("updated_at:")}${task.updated_at}`);
 

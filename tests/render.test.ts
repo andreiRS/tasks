@@ -63,6 +63,8 @@ test("renderTask returns the pinned human-readable layout", () => {
     "deps:          (none)\n" +
     "agent_ready:   false\n" +
     "human_in_loop: false\n" +
+    "Attendance:    attended\n" +
+    "Effort:        medium\n" +
     "created_at:    2026-05-27T10:14:00.000Z\n" +
     "updated_at:    2026-05-27T10:14:00.000Z\n" +
     "\n" +
