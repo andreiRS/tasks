@@ -72,7 +72,7 @@ test("tasks export --json on uninitialized store exits non-zero with error envel
 
 // ─── Slice 2: single task in `ready` with body + AC ──────────────────────────
 
-test.skip("tasks export --json: single ready task carries frontmatter, body, and parsed acceptance_criteria", async () => {
+test("tasks export --json: single ready task carries frontmatter, body, and parsed acceptance_criteria", async () => {
   const body = [
     "Some intro prose.",
     "",

@@ -1,6 +1,12 @@
 import { existsSync } from "node:fs";
-import { resolveStoreDir } from "../store.ts";
+import {
+  COLUMNS,
+  findAllTasks,
+  resolveStoreDir,
+  type TaskData,
+} from "../store.ts";
 import { writeJsonError, writePlainError } from "../cli/errors.ts";
+import { parseAcceptanceCriteria } from "../acceptance.ts";
 
 const SCHEMA_VERSION = "1";
 
@@ -22,17 +28,44 @@ async function readHeadSha(dir: string): Promise<string> {
   return stdout.trim();
 }
 
+interface ExportedLiveTask {
+  id: number;
+  uuid: string;
+  title: string;
+  column: string;
+  created_at: string;
+  updated_at: string;
+  body: string;
+  deps: string[];
+  attendance: "attended" | "unattended";
+  effort: "low" | "medium" | "high";
+  acceptance_criteria: string;
+}
+
+function toLiveExport(task: TaskData): ExportedLiveTask {
+  return {
+    id: task.id,
+    uuid: task.uuid,
+    title: task.title,
+    column: task.column,
+    created_at: task.created_at,
+    updated_at: task.updated_at,
+    body: task.body,
+    deps: task.deps,
+    attendance: task.attendance,
+    effort: task.effort,
+    acceptance_criteria: parseAcceptanceCriteria(task.body),
+  };
+}
+
 export async function run(rest: string[]): Promise<void> {
   const jsonFlag = rest.includes("--json");
 
-  // `export` always emits JSON. Require --json explicitly so we don't paint
-  // a future human format into a corner.
   if (!jsonFlag) {
     writePlainError("MISSING_FIELD: tasks export requires --json");
     process.exit(1);
   }
 
-  // Read command: never auto-init. Mirror `list`'s NOT_INITIALIZED treatment.
   const dir = resolveStoreDir(process.cwd());
   if (!existsSync(dir)) {
     writeJsonError(
@@ -43,13 +76,16 @@ export async function run(rest: string[]): Promise<void> {
     process.exit(1);
   }
 
+  const liveTasks = findAllTasks(dir);
+  const tasksOut: ExportedLiveTask[] = liveTasks.map(toLiveExport);
+
   const headSha = await readHeadSha(dir);
 
   const envelope = {
     ok: true,
     schema_version: SCHEMA_VERSION,
     head_sha: headSha,
-    tasks: [],
+    tasks: tasksOut,
     reverse_deps: {},
   };
 
