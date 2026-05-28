@@ -14,7 +14,7 @@ flowchart LR
     M6["M6 Edit &amp; delete<br/>3 / 3"]:::done
     M7a["M7a DAG + rm cascade<br/>4 / 4"]:::done
     M7b["M7b Link, unlink, blockers<br/>4 / 4"]:::done
-    M8["M8 Agent collaboration<br/>5 / 5"]:::done
+    M8["M8 Agent collaboration<br/>5 / 5 (cycle 7 in progress)"]:::wip
     M9["M9 Undo<br/>0 / 1"]:::todo
     M10["M10 Ship<br/>0 / 0 (polish)"]:::todo
 
@@ -29,7 +29,7 @@ flowchart LR
     classDef todo fill:#3a3a3a,stroke:#1a1a1a,color:#fff;
 ```
 
-Legend: green = shipped, grey = not started. Numbers are `completed / total` user stories per milestone, taken from the **Stories covered** line of each milestone section (a story split across milestones is counted in each). M10 introduces no new stories — it's a consistency + release pass.
+Legend: green = shipped, yellow = in progress, grey = not started. Numbers are `completed / total` user stories per milestone, taken from the **Stories covered** line of each milestone section (a story split across milestones is counted in each). M10 introduces no new stories — it's a consistency + release pass.
 
 Story totals: **35 / 36** unique PRD stories landed. Story 7 (`tasks undo`) is the only one still open, and it lands with M9.
 
