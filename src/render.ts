@@ -96,7 +96,7 @@ function sortForList(tasks: TaskData[]): TaskData[] {
   });
 }
 
-// Fixed layout budget for the human list view (see docs/specs/list-rendering.md).
+// Fixed layout budget for the human list view.
 // Layout is pinned to a ~120-col target and is NOT adaptive to the terminal.
 const LIST_TOTAL_W = 120;
 const LIST_GAP = 2;
@@ -193,7 +193,7 @@ export function renderList(tasks: TaskData[], options: RenderOptions): string {
   return lines.join("\n") + "\n";
 }
 
-// ─── Board layout (see docs/specs/board-rendering.md) ────────────────────────
+// ─── Board layout ────────────────────────────────────────────────────────────
 
 // Lifecycle order of lanes, left to right.
 const BOARD_LANE_ORDER = ["backlog", "ready", "doing", "blocked", "review", "done"];
