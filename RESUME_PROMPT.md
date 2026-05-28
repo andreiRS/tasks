@@ -4,7 +4,7 @@ Paste the body below into a fresh Claude Code session at `/Users/razvan.surdu/Pr
 
 ---
 
-We are building the `tasks` CLI per `PRD.md` and `MILESTONES.md` in this directory. M1 through M7a are complete; we are starting M7b.
+We are building the `tasks` CLI per `PRD.md` and `MILESTONES.md` in this directory. M1 through M7b are complete. **M8 is in progress: cycles 1-6 of 7 have landed; cycle 7 (renderer glyphs) is the next behavior.** There are also two queued followup fixes.
 
 ## Working method (NON-NEGOTIABLE)
 
@@ -12,76 +12,73 @@ We are building the `tasks` CLI per `PRD.md` and `MILESTONES.md` in this directo
 - One red-green cycle per agent spawn. You orchestrate; you do NOT code yourself. Subagents do the coding and commit.
 - Atomic commits at every green. Commit message form: `green: <one-line behavior>` (HEREDOC, include `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`).
 - All work on `main`. No squashing, no rewriting history (no `--amend`). Lint/type fixups land as separate `fix:` or `refactor:` commits.
-- Agents run BOTH `bun test` AND `bunx tsc --noEmit` before committing. They can also use the `LSP` deferred tool (load via `ToolSearch select:LSP`) for fast incremental type checks during edits.
+- Agents run BOTH `bun test` AND `bunx tsc --noEmit` before committing. Both must be clean. No unused imports.
 - Tests live in `tests/`, spawn the binary via `Bun.spawn(["bun","run",cliPath,...])` against a `TASKS_HOME` tempdir; assert on stdout/stderr/exit code/on-disk state.
-- When committing, stage specific files (or carefully scope `git add -A`). Stray working-tree deletes have been swept in once before — be deliberate.
+- When committing, stage specific files. Be deliberate; never sweep the worktree with `git add -A`.
 
 ## Agent model policy
 
 - **Sonnet** for routine red-green cycles.
-- **Opus** for complex/architectural cycles (renderer, validator, anything cross-cutting like the `edit` round-trip).
+- **Opus** for complex/architectural cycles (renderer, validator, anything cross-cutting).
 
 ## Style notes
 
 - Use `bun`, never `npm`.
 - No em-dashes anywhere (chat, code, comments, commit messages, rendered output).
 
-## Current state (newest first)
+## Done in M8 so far
 
-```
-56165a9 fix: drop unused parseYaml import in rm-cascade.test.ts
-ea5918c green: tasks rm refuses on dependents and --force cascades the strip
-9fdeee6 green: validator enforces DAG rules (UNKNOWN_UUID + CYCLE_DETECTED) on mutations
-d2df609 green: tasks edit round-trips through EDITOR with validation and abort
-bf305c4 fix: drop unused readFileSync import in rm.test.ts
-... (see `git log --oneline | head -30` for the full ledger)
-```
+- **Cycle 1 (Opus, 9e79586)**: `attendance` (default `attended`) and `effort` (default `medium`) frontmatter fields. Validator rejects bad enums with `INVALID_ATTENDANCE` / `INVALID_EFFORT`. Read commands resolve missing values to defaults and always emit them in `--json`.
+- **Cycle 2 (Sonnet, 540998d)**: `tasks new` flags: `--unattended`, `--effort`, `--deps`, `--edit`, `--body -`. `--edit` and `--body -` together error with `CONFLICT`.
+- **Cycle 3 (Opus, 711c934)**: `tasks set <id|uuid> [--title|--attendance|--effort]`. Scalar setter, one commit per invocation. Title change recomputes slug + `git mv` (reuses `editTask` logic).
+- **Cycle 4 (Sonnet, bd159ef)**: `tasks list --attendance` and `--effort` single-value filters. Compose AND with each other and with `--column`.
+- **Cycle 5 (Sonnet, 42d69d1)**: `tasks next [--attendance|--unattended] [--json]`. Oldest `created_at` wins, ties broken by id ascending. `NO_READY_TASK` on empty. Read-only (no flock, no auto-init). Passing `--attendance attended` with `--unattended` errors with `CONFLICT`.
+- **Cycle 6 (Opus, a20d369)**: Hand-rolled fence-aware case-insensitive Acceptance Criteria parser (`src/acceptance.ts`). Exposed as `acceptance_criteria` (string, `""` if absent) on `show`/`list`/`board`/`next` `--json`.
 
-`bun test` → **110 pass**, 14 files. `bunx tsc --noEmit` → clean.
+Plus docs: 6b62949 + 24136d6 landed CONTEXT.md and 8 ADRs from a sibling worktree (now removed). 2b0d7a4 updated PRD.md and MILESTONES.md to the attendance/effort terminology.
 
-## Done so far
-
-- **M1**: Capture and inspect (JSON). `tasks new`, `tasks show`, flock, dirty-tree guard, store path resolver (walk-up to `.git`, hyphen-doubling encoding).
-- **M2**: Human renderer + color. `tasks show` human output. ANSI styling via `style()` helper. Precedence: `--no-color` > `NO_COLOR` > `FORCE_COLOR=1` > TTY-default.
-- **M3**: Flat list. `tasks list` (human + `--json`).
-- **M4**: Filters, board, cutoff. `tasks list --column` (OR-combine, repeatable). `tasks board` (stacked sections; `--json` returns `{ <column>: TaskData[] }` for all six). Default cutoff hides `done` tasks older than 7d; `--all` and `--since <Nd>` override.
-- **M5**: Move. `tasks mv <id|uuid> <column>`. Same-column no-op. Bumps `updated_at`. `INVALID_COLUMN` enum entry.
-- **M6**: Edit and delete. `tasks edit` round-trips through `$EDITOR`, validates on save, title-change does atomic content-update + `git mv` in one commit. `tasks edit --abort` resets working tree. Exempt from `STORE_DIRTY`. `tasks rm <id|uuid>` deletes + commits.
-- **M7a**: DAG model and rm cascade. `deps: []` in frontmatter. `validateGraph()` enforces `UNKNOWN_UUID` and `CYCLE_DETECTED` on every mutation that could produce new edges. `tasks rm` refuses with `DEP_EXISTS` if dependents exist; `tasks rm --force` cascades the strip in one atomic commit, prints `affected: #<id> <title>` lines to stderr.
-
-## Six columns (canonical order)
-
-`backlog ready doing blocked review done`
+`bun test` → **208 pass, 1 fail** (the failure is pre-existing — see followups below). `bunx tsc --noEmit` → clean.
 
 ## What's queued next
 
-- **M7b**: `tasks link <id|uuid> --depends-on <id|uuid>...` and `tasks unlink ...` (repeatable, single commit per invocation). Extend `tasks show` human + `--json` to render forward deps as `#id title` and reverse edges (what this task blocks). Reuse `validateGraph()` — link/unlink should inherit cycle + unknown-uuid checks automatically. Suggested slicing: (1) `link` command; (2) `unlink` command; (3) `show` extension for forward+reverse edges.
-- **M8**: Agent collaboration. `tasks next`, `--edit`, `--body -`, `--deps`, acceptance criteria parser.
-- **M9**: Undo.
-- **M10**: Ship (build + README).
+### M8 cycle 7 (Sonnet): Renderer glyphs + show header
+
+Per PRD line 181 and MILESTONES.md M8 last bullet:
+- `tasks show` human rendering: header block now includes `attendance` and `effort` as full words.
+- `tasks list` and `tasks board` human rendering: append compact dim-styled glyphs per row. PRD example glyphs: `○` (attended) / `●` (unattended), and `·L` / `·M` / `·H` for effort. Keep the kanban layout tight; the glyphs should NOT widen board columns.
+- All glyphs respect the existing `--no-color` / `NO_COLOR` plumbing (the dim styling goes through the renderer module).
+- Do NOT change `--json` output (already emits resolved attendance/effort since cycle 1).
+
+### Followups (separate `fix:` commits, can be interleaved or batched)
+
+1. **`tasks new --edit` produces two commits.** PRD says ONE commit per invocation. Cycle 2's agent noted this. Options: defer the initial creation commit until after the editor exits, or squash the two into one before persisting.
+2. **`tests/cutoff.test.ts --since 1d` failing.** Pre-existing (fails even on commits before M8). Looks like a date-sensitivity / duration-parse bug. Worth a focused debugging cycle.
+
+### After M8
+
+- **M9**: `tasks undo`.
+- **M10**: Ship (`bun build --compile`, README finalization).
 
 ## How to spawn the next cycle
 
 Use the `Agent` tool with `subagent_type: "general-purpose"`. Default `model: "sonnet"`; switch to `opus` for the explicitly-complex cycles. Each prompt should:
 
-1. Tell the agent to read `PRD.md` and `MILESTONES.md` first, then list current commits and current source files.
+1. Tell the agent to read `PRD.md` and `MILESTONES.md` first if context is needed.
 2. State the ONE behavior to drive, with explicit test plan.
 3. Call out what NOT to implement so the slice stays small.
-4. Remind: failing test first → right-reason failure → minimal impl → `LSP` incremental + `bunx tsc --noEmit` + `bun test` clean → one commit with HEREDOC message → terse report (<150 words).
-5. End with "Stop after ONE cycle."
+4. Remind: failing test first → right-reason failure → minimal impl → `bunx tsc --noEmit` + `bun test` clean → one commit with HEREDOC message → terse report.
+5. Warn about unused imports — the project's `tsc` flags them and they need a separate `fix:` commit if shipped.
 
 After each agent returns, verify with `bun test`, `bunx tsc --noEmit`, and `git log --oneline | head -3`, then spawn the next.
 
-## Known editor-diagnostic quirk
+## Six columns (canonical order)
 
-After each new test file is created, the editor often emits stale diagnostics like `Cannot find module '../src/render.ts'`. Ignore these if `bunx tsc --noEmit` is clean. They clear on the next save.
+`backlog ready doing blocked review done`
 
 ## External env
 
-- bun 1.3.13 (PRD wants 1.3.14+; non-blocking).
-- `flock` at `/opt/homebrew/bin/flock`. Required.
-- macOS Darwin 25.4.0, zsh.
+- bun 1.3.13+. `flock` at `/opt/homebrew/bin/flock` (required). macOS Darwin 25.4.0, zsh.
 
 ## Suggested first action on resume
 
-Spawn the M7b `link` cycle (Sonnet). Then `unlink` (Sonnet). Then the `show` extension (Opus for the renderer touch).
+Spawn cycle 7 (Sonnet): renderer glyphs and `show` header attendance/effort.
