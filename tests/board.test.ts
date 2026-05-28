@@ -322,3 +322,107 @@ test("tasks board --json on empty (initialized) store returns all six columns wi
     expect((parsed[col] as unknown[]).length).toBe(0);
   }
 });
+
+// ─── CLI E2E: tasks board adaptive lane dropping ──────────────────────────────
+
+test("tasks board COLUMNS=120 drops done lane and shows hidden-lanes footer", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await seedSpecDataset(storeDir);
+
+  const { exitCode, stdout } = await runTasks(["board", "--no-color"], { COLUMNS: "120" });
+  expect(exitCode).toBe(0);
+
+  const lines = stdout.split("\n");
+  const headerLine = lines[0];
+
+  // 5 visible lanes: BACKLOG, READY, DOING, BLOCKED, REVIEW
+  expect(headerLine).toContain("BACKLOG (6)");
+  expect(headerLine).toContain("READY (0)");
+  expect(headerLine).toContain("DOING (2)");
+  expect(headerLine).toContain("BLOCKED (0)");
+  expect(headerLine).toContain("REVIEW (1)");
+
+  // DONE should NOT appear in the header line
+  expect(headerLine).not.toContain("DONE (1)");
+
+  // Check lifecycle order in header
+  for (const [a, b] of [
+    ["BACKLOG (6)", "READY (0)"],
+    ["READY (0)", "DOING (2)"],
+    ["DOING (2)", "BLOCKED (0)"],
+    ["BLOCKED (0)", "REVIEW (1)"],
+  ]) {
+    expect(headerLine.indexOf(a)).toBeLessThan(headerLine.indexOf(b));
+  }
+
+  // Footer line present
+  expect(stdout).toContain("hidden: done (1) · widen terminal or run `tasks list` to see all");
+
+  // Existing lane content still correct
+  const backlogLine = lines.find((l) => l.includes("Implement JWT"));
+  expect(backlogLine).toBeDefined();
+  expect(backlogLine).toContain("← #1");
+});
+
+test("tasks board COLUMNS=95 drops done and review lanes, shows multi-hidden footer", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await seedSpecDataset(storeDir);
+
+  const { exitCode, stdout } = await runTasks(["board", "--no-color"], { COLUMNS: "95" });
+  expect(exitCode).toBe(0);
+
+  const lines = stdout.split("\n");
+  const headerLine = lines[0];
+
+  // 4 visible lanes: BACKLOG, READY, DOING, BLOCKED
+  expect(headerLine).toContain("BACKLOG (6)");
+  expect(headerLine).toContain("READY (0)");
+  expect(headerLine).toContain("DOING (2)");
+  expect(headerLine).toContain("BLOCKED (0)");
+
+  // REVIEW and DONE should NOT appear in the header line
+  expect(headerLine).not.toContain("REVIEW");
+  expect(headerLine).not.toContain("DONE");
+
+  // Footer with both hidden lanes in lifecycle order
+  expect(stdout).toContain("hidden: review (1), done (1) · widen terminal or run `tasks list` to see all");
+});
+
+test("tasks board without COLUMNS env var defaults to 120-col layout (drops done)", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await seedSpecDataset(storeDir);
+
+  // No COLUMNS set — default is 120
+  const { exitCode, stdout } = await runTasks(["board", "--no-color"]);
+  expect(exitCode).toBe(0);
+
+  const lines = stdout.split("\n");
+  const headerLine = lines[0];
+
+  // Same 5-lane behavior as explicit COLUMNS=120
+  expect(headerLine).toContain("BACKLOG (6)");
+  expect(headerLine).toContain("READY (0)");
+  expect(headerLine).toContain("DOING (2)");
+  expect(headerLine).toContain("BLOCKED (0)");
+  expect(headerLine).toContain("REVIEW (1)");
+  expect(headerLine).not.toContain("DONE (1)");
+
+  expect(stdout).toContain("hidden: done (1) · widen terminal or run `tasks list` to see all");
+});
+
+test("tasks board COLUMNS=160 shows all six lanes and no hidden footer", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await seedSpecDataset(storeDir);
+
+  const { exitCode, stdout } = await runTasks(["board", "--no-color"], { COLUMNS: "160" });
+  expect(exitCode).toBe(0);
+
+  const headerLine = stdout.split("\n")[0];
+
+  // All six lanes visible
+  expect(headerLine).toContain("DONE (1)");
+  expect(headerLine).toContain("REVIEW (1)");
+
+  // No hidden footer
+  expect(stdout).not.toContain("hidden:");
+});

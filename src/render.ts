@@ -303,6 +303,10 @@ function boardArrow(ids: number[]): string {
   return `← #${ids[0]} +${ids.length - 1}`;
 }
 
+// Drop priority: rightmost lifecycle columns are dropped first.
+// backlog, ready, doing are the 3-lane floor (never dropped horizontally).
+const BOARD_DROP_ORDER = ["done", "review", "blocked"];
+
 /**
  * Render the board as side-by-side lanes in lifecycle order, separated by
  * ` │ `. Each lane has a header (`NAME (N)` in uniform caps), a `─` rule line
@@ -313,20 +317,42 @@ function boardArrow(ids: number[]): string {
  * gutter (only when the lane has an unattended task) and a right-pinned
  * `← #N` dependency arrow (reserved only when the lane has unmet deps).
  *
- * `options.width` is the resolved width budget. This slice renders all six
- * lanes side-by-side; adaptive dropping and the vertical fallback are not yet
- * implemented.
+ * `options.width` is the resolved width budget. Lanes are dropped right-to-left
+ * under width pressure (done → review → blocked), keeping backlog/ready/doing
+ * as the 3-lane floor. Dropped lanes appear in a footer line after the board.
  */
 export function renderBoard(grouped: Record<string, TaskData[]>, options: RenderOptions): string {
   const color = options.color === true;
   const blockedBy = options.blockedBy;
+  const budget = options.width ?? BOARD_DEFAULT_WIDTH;
 
-  const laneCells = BOARD_LANE_ORDER.map((col) =>
+  // Determine which lanes to show by dropping right-to-left under width pressure.
+  const dropped = new Set<string>();
+
+  const computeRequired = (visibleLanes: string[]): number => {
+    const n = visibleLanes.length;
+    const widthSum = visibleLanes.reduce(
+      (sum, col) => sum + laneWidth(col, (grouped[col] ?? []).length),
+      0,
+    );
+    return widthSum + BOARD_SEP.length * (n - 1);
+  };
+
+  let visibleLanes = [...BOARD_LANE_ORDER];
+
+  for (const dropCandidate of BOARD_DROP_ORDER) {
+    if (computeRequired(visibleLanes) <= budget) break;
+    if (visibleLanes.length <= 3) break;
+    dropped.add(dropCandidate);
+    visibleLanes = visibleLanes.filter((col) => col !== dropCandidate);
+  }
+
+  const laneCells = visibleLanes.map((col) =>
     renderLane(col, grouped[col] ?? [], blockedBy, color),
   );
 
   const rows = Math.max(...laneCells.map((c) => c.length));
-  const widths = BOARD_LANE_ORDER.map((col) =>
+  const widths = visibleLanes.map((col) =>
     laneWidth(col, (grouped[col] ?? []).length),
   );
 
@@ -339,7 +365,21 @@ export function renderBoard(grouped: Record<string, TaskData[]>, options: Render
     lines.push(parts.join(BOARD_SEP).replace(/\s+$/, ""));
   }
 
-  return lines.join("\n") + "\n";
+  let out = lines.join("\n") + "\n";
+
+  // Hidden-lanes footer when any lanes were dropped.
+  if (dropped.size > 0) {
+    // List dropped lanes in lifecycle order (same as BOARD_LANE_ORDER).
+    const droppedInOrder = BOARD_LANE_ORDER.filter((col) => dropped.has(col));
+    const footerParts = droppedInOrder.map((col) => {
+      const count = (grouped[col] ?? []).length;
+      return `${col} (${count})`;
+    });
+    const footer = `hidden: ${footerParts.join(", ")} · widen terminal or run \`tasks list\` to see all`;
+    out += "\n" + footer + "\n";
+  }
+
+  return out;
 }
 
 /**
