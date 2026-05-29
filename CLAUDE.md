@@ -15,7 +15,7 @@ Single-binary Bun/TypeScript CLI for human + agent task management. Tasks are ma
 
 ## Conventions
 - Always `bun`, never `npm`.
-- Run tests: `bun test`. Run CLI in dev: `bun run src/cli.ts ...`.
+- Run tests: `bun run test` (parallel across workers, `--timeout 30000`). `bun test` alone runs one file at a time; `bun run test:serial` forces that. The raised timeout is required: every test spawns the CLI + several `git` subprocesses, and under `--parallel` the CPU-heaviest tests would blow the 5s default while contending for cores. Run CLI in dev: `bun run src/cli.ts ...`.
 - Use error codes from README's error-envelope list (`STORE_DIRTY`, `CYCLE_DETECTED`, `UNKNOWN_UUID`, ...) verbatim.
 - Mutating commands: acquire `flock`, then dirty-tree guard, then validate, write, commit.
 - `--json` is opt-in on every read command; never auto-switch on non-TTY.

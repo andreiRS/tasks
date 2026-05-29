@@ -236,11 +236,14 @@ All read commands (`show`, `list`, `board`, `next`, `export`, `summary`) and all
 ## Tests
 
 ```sh
-bun test
+bun run test          # parallel across workers (~5x faster on a multi-core machine)
+bun run test:serial   # one file at a time, the plain `bun test` behaviour
 bunx tsc --noEmit
 ```
 
 Tests spawn the CLI via `Bun.spawn` against a tempdir `TASKS_HOME` and assert on stdout, stderr, exit codes, and on-disk state. No git mocking. No assertions on internal modules. See [CLAUDE.md](./CLAUDE.md) for the TDD working method (one commit per green state, refactors only from green).
+
+`bun run test` passes `--parallel` (one worker process per core, fully isolated per file) and `--timeout 30000`. The longer timeout is deliberate: each test forks the CLI plus several `git` processes, so under heavy parallelism the CPU-bound tests would otherwise exceed the 5s default while contending for cores — not a real hang.
 
 ## Layout
 

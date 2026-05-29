@@ -65,7 +65,7 @@ jobs:
         run: brew install flock
 
       - name: Run tests
-        run: bun test
+        run: bun run test
 
       - name: Build standalone binary
         run: bun build --compile --target=${{ matrix.bun_target }} ./src/cli.ts --outfile=dist/tasks-${{ matrix.target }}
