@@ -1247,23 +1247,9 @@ export async function editTask(
     const newTitle = fm.title as string;
     const titleChanged = oldTitle !== newTitle;
 
-    // Bump updated_at on the new content.
-    const now = new Date().toISOString();
-    let bumped = after.replace(/^(updated_at:\s*)(.+)$/m, `$1${now}`);
-    if (!/^updated_at:/m.test(bumped)) {
-      // Insert into frontmatter just before closing ---
-      const fmEndIdx = bumped.indexOf("\n---", bumped.indexOf("---") + 3);
-      if (fmEndIdx !== -1) {
-        bumped = bumped.slice(0, fmEndIdx) + `\nupdated_at: ${now}` + bumped.slice(fmEndIdx);
-      }
-    }
-
-    // If updated_at bump resulted in identical content (rare; e.g. user already
-    // set updated_at to now), still proceed since other content differs.
-    writeFileSync(filePath, bumped, "utf-8");
-
-    // Validate enum fields on the just-saved file (post-mutation state).
-    // Leaves the bad file on disk so `tasks edit --abort` or re-edit recovers.
+    // Validate enum fields on the edited (on-disk) content BEFORE persisting.
+    // On failure we throw without writing, leaving the user's edited file on
+    // disk so `tasks edit --abort` or a re-edit recovers (mirrors INVALID_TITLE).
     if (fm.attendance !== undefined && resolveAttendance(fm.attendance) === null) {
       throw new TasksError(
         "INVALID_ATTENDANCE",
@@ -1279,41 +1265,20 @@ export async function editTask(
       );
     }
 
-    // Validate the graph across all on-disk tasks (post-mutation state). If
-    // validation fails, leave the bad file on disk (mirrors INVALID_TITLE) so
-    // the user can `tasks edit --abort` or re-edit in place; do not commit.
+    // Validate the graph across all on-disk tasks (the editor's content is
+    // already on disk). On failure, leave the bad file in place; do not commit.
     validateGraph(findAllTasks(dir));
 
-    const oldRelPath = `${column}/${filename}`;
-
-    if (titleChanged) {
-      const newSlug = slugify(newTitle);
-      const id = oldFm.id as number;
-      const newFilename = `${id}-${newSlug}.md`;
-      const newRelPath = `${column}/${newFilename}`;
-      const newFilePath = join(dir, column, newFilename);
-
-      if (newFilename !== filename) {
-        // Stage the content modification first so git mv sees the modified content.
-        await git(["add", oldRelPath], dir);
-        const mvExit = await git(["mv", oldRelPath, newRelPath], dir);
-        if (mvExit !== 0) {
-          // Fall back: manual rename + git add/rm
-          renameSync(filePath, newFilePath);
-          await git(["rm", oldRelPath], dir);
-          await git(["add", newRelPath], dir);
-        }
-      } else {
-        // Slug unchanged (title differs only in case/punctuation that maps to same slug)
-        await git(["add", oldRelPath], dir);
-      }
-    } else {
-      await git(["add", oldRelPath], dir);
+    // Persist through the write primitive: bump updated_at, rename on a
+    // slug-changing title edit, and commit exactly what's staged for this task
+    // (leaving any pre-existing dirty tree alone — edit is exempt from
+    // STORE_DIRTY).
+    const tf = loadTaskFile(dir, idOrUuid);
+    if (!tf) {
+      throw new TasksError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
     }
-
-    // Commit ONLY what's staged for this task; leaves any pre-existing dirty
-    // tree alone (PRD: edit is exempt from STORE_DIRTY).
-    await git(["commit", "-m", `task: edit #${oldFm.id}`], dir);
+    if (titleChanged) tf.set("title", newTitle);
+    await commitTaskChange(tf, `task: edit #${oldFm.id}`);
 
     return { kind: "committed", titleChanged };
   });
