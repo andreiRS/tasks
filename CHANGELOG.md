@@ -10,7 +10,7 @@ versions; breaking changes will be called out explicitly here.
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-05-28
+## [0.1.0] - 2026-05-29
 
 First versioned release. `tasks` is a single-binary CLI for managing
 work as markdown files in a per-project, git-backed store. Every
