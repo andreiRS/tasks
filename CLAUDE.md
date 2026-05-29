@@ -6,7 +6,6 @@ Single-binary Bun/TypeScript CLI for human + agent task management. Tasks are ma
 - `PRD.md` — full spec (storage, CLI surface, validator, error codes).
 - `CONTEXT.md` — glossary. Use these terms exactly (Task, Store, Column, Dep, Short ID, UUID, Lock, Validator, Transition...).
 - `docs/adr/` — decisions (open transitions, lock model, path encoding, etc.).
-- `MILESTONES.md` — vertical slices and TDD working method.
 
 ## Working method (non-negotiable)
 - TDD outside-in at the CLI boundary. Tests spawn the binary against a `TASKS_HOME` tempdir; assert on stdout/stderr, exit codes, and on-disk state. No mocking of `git`. No assertions on internal modules.
