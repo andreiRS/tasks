@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, closeSync, openSync, renameSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import { stringify as yamlStringify, parse as yamlParse, parseDocument, type Document } from "yaml";
+import { parse as yamlParse, parseDocument, type Document } from "yaml";
 
 /**
  * A structured error thrown by the tasks CLI store layer.
@@ -380,18 +380,13 @@ export async function createTask(dir: string, title: string, opts: CreateTaskOpt
     const deps = opts.deps ?? [];
     const body = opts.body ?? "";
 
-    const frontmatter = yamlStringify({
-      id,
-      uuid,
-      title,
-      deps,
-      attendance,
-      effort,
-      created_at: now,
-      updated_at: now,
-    });
-
-    const fileContent = `---\n${frontmatter}---\n${body}`;
+    const fileContent = newTaskFile(
+      dir,
+      "backlog",
+      filename,
+      { id, uuid, title, deps, attendance, effort, created_at: now, updated_at: now },
+      body,
+    ).serialize();
     writeFileSync(taskPath, fileContent, "utf-8");
 
     // Update meta.yaml
@@ -811,6 +806,42 @@ function loadTaskFile(dir: string, ref: string): TaskFile | null {
   const loc = findTaskFilename(dir, ref);
   if (!loc) return null;
   return readTaskFileAt(dir, loc.column, loc.filename);
+}
+
+/** Canonical frontmatter fields for a brand-new task. */
+interface NewTaskFields {
+  id: number;
+  uuid: string;
+  title: string;
+  deps: string[];
+  attendance: string;
+  effort: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Build an in-memory TaskFile for a brand-new task (no file on disk yet),
+ * writing the canonical frontmatter field order in exactly one place. The
+ * caller serializes it for the initial write and owns the git/commit dance.
+ */
+function newTaskFile(
+  dir: string,
+  column: string,
+  filename: string,
+  fields: NewTaskFields,
+  body: string,
+): TaskFile {
+  const doc = parseDocument("");
+  doc.set("id", fields.id);
+  doc.set("uuid", fields.uuid);
+  doc.set("title", fields.title);
+  doc.set("deps", fields.deps);
+  doc.set("attendance", fields.attendance);
+  doc.set("effort", fields.effort);
+  doc.set("created_at", fields.created_at);
+  doc.set("updated_at", fields.updated_at);
+  return new TaskFile(dir, column, filename, doc, `\n${body}`);
 }
 
 /**
