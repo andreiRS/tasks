@@ -55,6 +55,10 @@ mutation is a commit, so history and rollback come for free.
 - Safety: mutating commands take a `flock`, refuse to run against a
   dirty tree (`STORE_DIRTY`), and run a validator that rejects cycles
   and unknown dependencies (`CYCLE_DETECTED`, `UNKNOWN_UUID`).
+- Commits use your configured git identity when present and fall back to
+  a built-in `tasks <tasks@localhost>` identity otherwise, so the store
+  works with no setup in fresh environments (CI, containers, agents); a
+  failed commit surfaces as `GIT_ERROR` rather than being swallowed.
 
 [Unreleased]: https://github.com/andreiRS/tasks/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/andreiRS/tasks/releases/tag/v0.1.0
