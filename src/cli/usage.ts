@@ -1,5 +1,9 @@
 export const USAGE = `Usage: tasks <command> [options]
 
+tasks is one task tracker that humans and AI agents drive together, so work
+hands off cleanly between them. Readable output and short IDs for people;
+--json and stable error codes for agents.
+
 Commands:
   new <title> [--effort <low|medium|high>] [--deps <id|uuid>]... [--unattended]
               [--body -] [--edit] [--json]

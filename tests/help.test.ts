@@ -45,6 +45,16 @@ test("tasks --help: prints usage with every command, exits 0", async () => {
   }
 });
 
+test("tasks --help: describes the tool and its human + agent audiences", async () => {
+  const { exitCode, stdout } = await runCli(["--help"]);
+  expect(exitCode).toBe(0);
+  // A one-line framing precedes the command list so a first-time reader knows
+  // what tasks is and why it serves both callers. Loose on wording, firm on intent.
+  expect(stdout).toContain("humans");
+  expect(stdout).toContain("agents");
+  expect(stdout.indexOf("humans")).toBeLessThan(stdout.indexOf("Commands:"));
+});
+
 test("tasks -h: same as --help", async () => {
   const { exitCode, stdout } = await runCli(["-h"]);
   expect(exitCode).toBe(0);
