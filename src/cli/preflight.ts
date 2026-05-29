@@ -20,7 +20,7 @@ export function flockGuard(ctx: OutputContext): void {
  * This is a fast, clear early check outside the lock; the definitive guard
  * lives inside each store mutation's withLock.
  */
-export async function ensureCleanStore(dir: string, ctx: OutputContext): Promise<void> {
+async function ensureCleanStore(dir: string, ctx: OutputContext): Promise<void> {
   if (await isStoreDirty(dir)) {
     const msg = "store working tree is dirty; commit or discard pending changes before running mutating commands";
     emit({ ok: false, code: "STORE_DIRTY", message: msg }, ctx);

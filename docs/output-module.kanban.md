@@ -6,33 +6,6 @@ kanban-plugin: board
 
 ## Backlog
 
-- [ ] **3 · Migrate Read commands to return a Result**
-	**Attendance:** unattended  ·  **Blocked by:** slice 2
-	**What to build:** Convert the Read commands — show, list, next, board, doctor, export, summary — so each returns a success Result instead of choosing JSON-vs-text in place. The output module renders the JSON payload or the text form via the Renderer. The JSON mode output (including `acceptance_criteria`, blockedBy, Export/Summary envelopes) and the human text are byte-for-byte what they are today.
-	**Acceptance:**
-	- [ ] All seven Read commands return a Result; no `if (jsonFlag)` branch left in them
-	- [ ] `--json` output unchanged for every Read command (envelope + fields)
-	- [ ] Text output unchanged (colour, cutoff, blocked-by markers)
-	- [ ] `bun test` green
-
-- [ ] **4 · Migrate Mutating commands to return a Result**
-	**Attendance:** unattended  ·  **Blocked by:** slice 2
-	**What to build:** Convert the Mutating commands — new, mv, rm, set, link, unlink, edit, archive, undo, init — to return a success Result. The before/after change set (the `changed` diff in `set`, affected counts in `rm`/`archive`, allocated Short ID in `new`, reverted SHAs in `undo`) is carried in the Result and turned into the success envelope by the output module. The success envelope shape per command is unchanged.
-	**Acceptance:**
-	- [ ] All ten Mutating commands return a Result; no `if (jsonFlag)` success branch left in them
-	- [ ] `--json` success envelopes unchanged per command (incl. `changed` diffs, counts, ids, SHAs)
-	- [ ] Text / silent success behaviour unchanged
-	- [ ] `tasks edit` still skips the dirty-tree guard (no regression)
-	- [ ] `bun test` green
-
-- [ ] **5 · Remove dead shallow helpers**
-	**Attendance:** unattended  ·  **Blocked by:** slices 3, 4
-	**What to build:** With every command going through the output module, delete the helpers left with zero callers (e.g. `cli/errors.ts`) and inline or drop any remaining glue that no longer earns its place. The colour decision lives in the output module now. Pure cleanup — no observable behaviour change.
-	**Acceptance:**
-	- [ ] Helpers with zero callers deleted
-	- [ ] No command rebuilds the JSON-vs-text branch or the error envelope by hand
-	- [ ] No dead exports remain in `src/cli/`
-	- [ ] `bun test` green
 
 
 ## Doing
@@ -40,6 +13,19 @@ kanban-plugin: board
 
 
 ## Done
+
+- [x] **5 · Remove dead shallow helpers**
+	**Attendance:** unattended  ·  **Blocked by:** slices 3, 4
+	**Delivered:** Deleted `src/cli/errors.ts` (zero callers). De-exported `ensureCleanStore` (only `mutatingPreamble` uses it) so no dead export remains in `src/cli/`. Verified no command rebuilds the JSON-vs-text branch or the error envelope by hand — the only surviving `ctx.json` refs are export/summary's `--json`-required failure guard and init's stderr "already exists" side-channel. Colour lives in the output module (`shouldColor` has one caller: `outputContext`). `bun test` green (331 pass).
+
+- [x] **4 · Migrate Mutating commands to return a Result**
+	**Attendance:** unattended  ·  **Blocked by:** slice 2
+	**Delivered:** new, mv, rm, set, link, unlink, edit, undo, archive, init now hand a `CommandResult` to `emit()`; no `if (json)` success branch remains. Silent-in-text mutations emit json-only; undo/archive carry json + text; init keeps its stderr notice as a side-channel; `new`'s always-plain line preserved via a forced-text context. `edit` still skips the dirty-tree guard. Done in a parallel worktree agent. `bun test` green (331 pass).
+
+- [x] **3 · Migrate Read commands to return a Result**
+	**Attendance:** unattended  ·  **Blocked by:** slice 2
+	**Delivered:** show, list, next, board, doctor, export, summary now hand a `CommandResult` to `emit()`; `shouldColor`/`noColorFlag` removed from commands (colour flows through `ctx.color`). export/summary stay json-only. doctor's two modes each produce a Result. Done in a parallel worktree agent. `bun test` green (331 pass).
+
 
 - [x] **2 · Build the output module + unified failure path**
 	**Attendance:** unattended  ·  **Blocked by:** slice 1
