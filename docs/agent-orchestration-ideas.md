@@ -12,9 +12,20 @@ Source material:
 Items are ordered by estimated agent-side value (most → least). Each carries a
 short rationale, sketch, and the open questions worth resolving before code.
 
+**Status (as of v0.1.0).** Some of the highest-value items have since shipped and
+are kept here only for context — the open ideas are #2, #3, #6, #7, #8, #9, #10.
+
+- ✅ **#1** — shipped as `tasks export --json` plus a separate `tasks summary --json`
+  command (the `--summary` variant became its own command).
+- 🟡 **#4** — partially shipped: `export`, `show`, and `next` expose
+  `acceptance_criteria` as a parsed **string**. The structured
+  `[{ text, satisfied }]` array proposed below is still open.
+- ✅ **#5** — shipped: `tasks next --json` returns the full task (frontmatter +
+  body + parsed `acceptance_criteria`) plus `deps_out` / `deps_in` edges.
+
 ---
 
-## 1. `tasks export --json` (with `--summary`)
+## 1. `tasks export --json` (with `--summary`) — ✅ shipped
 
 **Why it matters to an agent.** Today, learning the state of a store costs
 multiple round-trips (`list`, then `show` for each interesting task). One
@@ -106,7 +117,7 @@ try-then-rollback. Equivalent of "compile before run" at the CLI boundary.
 
 ---
 
-## 4. Structured acceptance criteria in `export`
+## 4. Structured acceptance criteria in `export` — 🟡 partially shipped (string, not structured)
 
 **Why it matters to an agent.** ADR-0007 puts acceptance criteria in the
 markdown body; `src/acceptance.ts` already parses them. Today the parsed form
@@ -137,7 +148,7 @@ upstream tracker checklist syntax.
 
 ---
 
-## 5. `tasks next` self-sufficient (`--json` returns full context)
+## 5. `tasks next` self-sufficient (`--json` returns full context) — ✅ shipped
 
 **Why it matters to an agent.** Story 26 already exists. Today `next` prints a
 short summary. If `next --json` returned the full body, parsed AC, and the dep

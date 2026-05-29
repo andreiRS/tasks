@@ -2,7 +2,7 @@
 
 A git-backed, file-per-task CLI for tracking work across six columns, designed so humans and Claude Code agents drive the same surface. Each task is a markdown file with YAML frontmatter, kept in a per-project git repository under `$TASKS_HOME`. Every mutation is an atomic commit, so the history is the audit log.
 
-> **Status:** v0.1.0 — first versioned release. M1 through M9 are complete. The store, validator (schema + DAG rules), all read commands (`show`, `list`, `board`, `next`, `export`, `summary`), and all write commands (`init`, `new`, `mv`, `edit`, `set`, `link`, `unlink`, `rm`, `undo`, `archive`) are live. See [CHANGELOG.md](./CHANGELOG.md) for the release history and [MILESTONES.md](./MILESTONES.md) for the delivery plan.
+> **Status:** v0.1.0 — first versioned release. M1 through M9 are complete. The store, validator (schema + DAG rules), all read commands (`show`, `list`, `board`, `next`, `export`, `summary`), and all write commands (`init`, `new`, `mv`, `edit`, `set`, `link`, `unlink`, `rm`, `undo`, `archive`), plus `doctor`, are live. See [CHANGELOG.md](./CHANGELOG.md) for the release history.
 
 ## Why
 
@@ -103,6 +103,7 @@ Flat list across all six columns. By default hides `done/` tasks whose `updated_
 - `--effort <low|medium|high>` — single value.
 - `--all` — show everything regardless of age.
 - `--since <Nd>` — override the cutoff window.
+- `--archived` — list only the `archive/` directory instead of the live columns.
 - `--json`, `--no-color`.
 
 ### `tasks board [--all] [--since <Nd>] [--json] [--no-color]`
@@ -180,6 +181,14 @@ Compact Store digest for "what's going on right now?" without dumping every task
 
 `--recent N` overrides the 10-task default; `--stale <duration>` overrides the 14-day threshold. `--json` is required.
 
+### `tasks archive [<id|uuid>] [--before <Nd>] [--json]`
+
+Retire `done/` tasks into the sibling `archive/` directory (not a Column; transitions never target it). With no args, archives every task currently in `done/`. `--before <Nd>` archives only `done/` tasks whose `updated_at` is older than the cutoff. A single `<id|uuid>` archives just that task, which must be in `done/` (otherwise `INVALID_COLUMN`). All three forms land as a single commit, take the lock, and honor the dirty-tree guard. Archived tasks still count as Complete for blocking purposes. `--json` returns `{ ok: true, archived: [{ id, uuid, title }, ...] }`.
+
+### `tasks doctor [--clean] [--json]`
+
+Store diagnostics and non-destructive recovery; always exits 0. Without flags, prints the store path, `git status --short` of the store, and the count of outstanding `doctor` stashes. `--clean` runs `git stash push --include-untracked` so subsequent mutations no longer hit `STORE_DIRTY`, printing the new stash ref so you can recover with stock `git stash pop`; on an already-clean tree it prints `store already clean` and stashes nothing. `doctor` does not take the lock, does not validate schema, and never deletes files. `--json` returns `{ store, status, stashes }` (or `{ store, stashed, stash_ref }` after a `--clean` stash).
+
 ## Safety rails
 
 - **flock**: every mutating command takes an exclusive lock on the store. Concurrent invocations serialize. Missing `flock` on `$PATH` emits `FLOCK_MISSING` with the install hint.
@@ -223,6 +232,8 @@ All read commands (`show`, `list`, `board`, `next`, `export`, `summary`) and all
 | `unlink` | `{ ok: true, id, uuid, removed }` |
 | `rm` | `{ ok: true, id, uuid, forced, cascaded }` |
 | `undo` | `{ ok: true, reverted, revert }` |
+| `archive` | `{ ok: true, archived: [{ id, uuid, title }, ...] }` |
+| `doctor` | `{ store, status, stashes }` (or `{ store, stashed, stash_ref }` on `--clean`) |
 
 ## Tests
 
@@ -231,22 +242,30 @@ bun test
 bunx tsc --noEmit
 ```
 
-Tests spawn the CLI via `Bun.spawn` against a tempdir `TASKS_HOME` and assert on stdout, stderr, exit codes, and on-disk state. No git mocking. No assertions on internal modules. See [MILESTONES.md](./MILESTONES.md) for the TDD working method (one commit per green state, refactors only from green).
+Tests spawn the CLI via `Bun.spawn` against a tempdir `TASKS_HOME` and assert on stdout, stderr, exit codes, and on-disk state. No git mocking. No assertions on internal modules. See [CLAUDE.md](./CLAUDE.md) for the TDD working method (one commit per green state, refactors only from green).
 
 ## Layout
 
 ```
 src/
-  cli.ts         command dispatch + argument parsing
-  store.ts       path resolver, encoding, store ops, validator, flock wrapper
-  render.ts      human renderers for show / list / board / next, color helpers
-  acceptance.ts  hand-rolled fence-aware Acceptance Criteria parser
-tests/           CLI-level integration tests
-docs/adr/        Architecture Decision Records
-PRD.md           product spec
-CONTEXT.md       glossary (canonical terms)
-MILESTONES.md    delivery plan + status
-CLAUDE.md        agent-facing pointer file
+  cli.ts          command dispatch entry point
+  cli/            arg parsing, usage, output/emit, color, filters, preflight, validation
+  commands/       one file per command (new, show, list, board, mv, edit, set,
+                  link, unlink, rm, next, init, undo, archive, export, summary, doctor)
+  store.ts        store ops; paths.ts (resolve + encode), git.ts, lock.ts (flock wrapper)
+  store-init.ts   auto-init: git init, seed commit, column dirs
+  task-file.ts    frontmatter read/write via the yaml Document API
+  validation.ts   schema + DAG validator; queries.ts dep-graph reads
+  render.ts       human renderers for show / list / board / next
+  acceptance.ts   hand-rolled fence-aware Acceptance Criteria parser
+  types.ts        shared types; errors.ts error codes; constants.ts columns + defaults
+tests/            CLI-level integration tests
+docs/adr/         Architecture Decision Records
+PRD.md            product spec + design rationale
+CONTEXT.md        glossary (canonical terms)
+CHANGELOG.md      release history
+RELEASING.md      release process
+CLAUDE.md         agent-facing pointer + working method
 ```
 
 ## License
