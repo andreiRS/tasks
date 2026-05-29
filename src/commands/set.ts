@@ -1,5 +1,5 @@
 import { findTask, setTask, type TaskData } from "../store.ts";
-import { handleTasksError, writeJsonError, writePlainError } from "../cli/errors.ts";
+import { emit, failFromError, outputContext } from "../cli/output.ts";
 import { mutatingPreamble } from "../cli/preflight.ts";
 import { validateEnumOrExit, validateTitle } from "../cli/validation.ts";
 
@@ -7,7 +7,7 @@ const VALID_ATTENDANCE = ["attended", "unattended"] as const;
 const VALID_EFFORT = ["low", "medium", "high"] as const;
 
 export async function run(rest: string[]): Promise<void> {
-  const jsonFlag = rest.includes("--json");
+  const ctx = outputContext(rest);
 
   const posArgs = rest.filter((a) => !a.startsWith("--"));
   const subjectRef = posArgs[0] ?? "";
@@ -32,46 +32,31 @@ export async function run(rest: string[]): Promise<void> {
 
   if (!subjectRef) {
     const msg = "usage: tasks set <id|uuid> [--title <title>] [--attendance <attended|unattended>] [--effort <low|medium|high>]";
-    if (jsonFlag) {
-      writeJsonError("MISSING_FIELD", msg, {});
-    } else {
-      writePlainError(`MISSING_FIELD: ${msg}`);
-    }
-    process.exit(1);
+    emit({ ok: false, code: "MISSING_FIELD", message: msg }, ctx);
   }
 
   if (!titlePresent && attendanceValue === undefined && effortValue === undefined) {
     const msg = "tasks set requires at least one of --title, --attendance, --effort";
-    if (jsonFlag) {
-      writeJsonError("MISSING_FIELD", msg, {});
-    } else {
-      writePlainError(`MISSING_FIELD: ${msg}`);
-    }
-    process.exit(1);
+    emit({ ok: false, code: "MISSING_FIELD", message: msg }, ctx);
   }
 
   if (attendanceValue !== undefined) {
-    validateEnumOrExit("--attendance", attendanceValue, VALID_ATTENDANCE, jsonFlag, "INVALID_ATTENDANCE");
+    validateEnumOrExit("--attendance", attendanceValue, VALID_ATTENDANCE, ctx, "INVALID_ATTENDANCE");
   }
   if (effortValue !== undefined) {
-    validateEnumOrExit("--effort", effortValue, VALID_EFFORT, jsonFlag, "INVALID_EFFORT");
+    validateEnumOrExit("--effort", effortValue, VALID_EFFORT, ctx, "INVALID_EFFORT");
   }
   if (titlePresent) {
     const err = validateTitle(titleValue ?? "");
     if (err !== null) {
-      if (jsonFlag) {
-        writeJsonError("INVALID_TITLE", err, {});
-      } else {
-        writePlainError(`INVALID_TITLE: ${err}`);
-      }
-      process.exit(1);
+      emit({ ok: false, code: "INVALID_TITLE", message: err }, ctx);
     }
   }
 
-  const dir = await mutatingPreamble(jsonFlag);
+  const dir = await mutatingPreamble(ctx);
 
   let setTaskBefore: TaskData | null = null;
-  if (jsonFlag) {
+  if (ctx.json) {
     setTaskBefore = findTask(dir, subjectRef);
   }
 
@@ -82,10 +67,10 @@ export async function run(rest: string[]): Promise<void> {
       effort: effortValue as "low" | "medium" | "high" | undefined,
     });
   } catch (err) {
-    handleTasksError(err, jsonFlag);
+    emit(failFromError(err), ctx);
   }
 
-  if (jsonFlag && setTaskBefore) {
+  if (ctx.json && setTaskBefore) {
     const changed: Record<string, unknown> = {};
     if (titlePresent && titleValue !== setTaskBefore.title) {
       changed.title = titleValue;

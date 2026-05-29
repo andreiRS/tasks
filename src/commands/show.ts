@@ -1,21 +1,16 @@
 import { findAllTasks, findArchivedTasks, findTask, resolveStoreDir, type TaskData } from "../store.ts";
 import { renderTask } from "../render.ts";
-import { writeJsonError, writePlainError } from "../cli/errors.ts";
+import { emit, outputContext } from "../cli/output.ts";
 import { shouldColor } from "../cli/color.ts";
 import { withAcceptanceCriteria } from "../cli/filters.ts";
 
 export async function run(rest: string[]): Promise<void> {
-  const jsonFlag = rest.includes("--json");
+  const ctx = outputContext(rest);
   const noColorFlag = rest.includes("--no-color");
   const idOrUuid = rest.find((a) => a !== "--json" && a !== "--no-color") ?? "";
 
   if (!idOrUuid) {
-    if (jsonFlag) {
-      writeJsonError("MISSING_FIELD", "id or uuid is required", {});
-    } else {
-      writePlainError("MISSING_FIELD: id or uuid is required");
-    }
-    process.exit(1);
+    emit({ ok: false, code: "MISSING_FIELD", message: "id or uuid is required" }, ctx);
   }
 
   const dir = resolveStoreDir(process.cwd());
@@ -29,12 +24,7 @@ export async function run(rest: string[]): Promise<void> {
     null;
 
   if (!task) {
-    if (jsonFlag) {
-      writeJsonError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
-    } else {
-      writePlainError(`NOT_FOUND: task not found: ${idOrUuid}`);
-    }
-    process.exit(1);
+    emit({ ok: false, code: "NOT_FOUND", message: `task not found: ${idOrUuid}`, details: { id: idOrUuid } }, ctx);
   }
 
   // Include archived tasks so deps to retired blockers resolve to "#id title"
@@ -50,7 +40,7 @@ export async function run(rest: string[]): Promise<void> {
     .sort((a, b) => a.id - b.id)
     .map((t) => ({ uuid: t.uuid, id: t.id, title: t.title }));
 
-  if (jsonFlag) {
+  if (ctx.json) {
     process.stdout.write(JSON.stringify({ ...withAcceptanceCriteria(task), deps_out, deps_in }) + "\n");
   } else {
     process.stdout.write(renderTask(task, { color: shouldColor(noColorFlag), deps_out, deps_in }));

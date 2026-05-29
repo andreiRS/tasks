@@ -1,13 +1,13 @@
 import { abortPendingEdits, editTask, ensureStore, findTask, storeDir, type TaskData } from "../store.ts";
-import { handleTasksError, writeJsonError, writePlainError } from "../cli/errors.ts";
+import { emit, failFromError, outputContext } from "../cli/output.ts";
 import { flockGuard } from "../cli/preflight.ts";
 
 export async function run(rest: string[]): Promise<void> {
-  const jsonFlag = rest.includes("--json");
+  const ctx = outputContext(rest);
   const abortFlag = rest.includes("--abort");
   const idOrUuid = rest.find((a) => a !== "--json" && a !== "--abort") ?? "";
 
-  flockGuard(jsonFlag);
+  flockGuard(ctx);
 
   const dir = storeDir(process.cwd());
   await ensureStore(dir);
@@ -19,27 +19,17 @@ export async function run(rest: string[]): Promise<void> {
 
   if (!idOrUuid) {
     const msg = "usage: tasks edit <id|uuid> [--abort]";
-    if (jsonFlag) {
-      writeJsonError("MISSING_FIELD", msg, {});
-    } else {
-      writePlainError(`MISSING_FIELD: ${msg}`);
-    }
-    process.exit(1);
+    emit({ ok: false, code: "MISSING_FIELD", message: msg }, ctx);
   }
 
   const editorEnv = process.env.EDITOR ?? process.env.VISUAL;
   if (!editorEnv || editorEnv.trim() === "") {
     const msg = "$EDITOR is not set; set EDITOR to your editor (e.g. vim, nano) and retry";
-    if (jsonFlag) {
-      writeJsonError("NO_EDITOR", msg, {});
-    } else {
-      writePlainError(`NO_EDITOR: ${msg}`);
-    }
-    process.exit(1);
+    emit({ ok: false, code: "NO_EDITOR", message: msg }, ctx);
   }
 
   let editTaskBefore: TaskData | null = null;
-  if (jsonFlag) {
+  if (ctx.json) {
     editTaskBefore = findTask(dir, idOrUuid);
   }
 
@@ -53,10 +43,10 @@ export async function run(rest: string[]): Promise<void> {
       });
       return await proc.exited;
     });
-    if (jsonFlag && editTaskBefore) {
+    if (ctx.json && editTaskBefore) {
       process.stdout.write(JSON.stringify({ ok: true, id: editTaskBefore.id, uuid: editTaskBefore.uuid, changed: editResult.kind !== "noop" }) + "\n");
     }
   } catch (err) {
-    handleTasksError(err, jsonFlag);
+    emit(failFromError(err), ctx);
   }
 }

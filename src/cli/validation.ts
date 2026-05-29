@@ -1,4 +1,4 @@
-import { writeJsonError, writePlainError } from "./errors.ts";
+import { emit, type OutputContext } from "./output.ts";
 
 /**
  * Validate a task title. Returns null on success, or an error message string.
@@ -35,15 +35,10 @@ export function validateEnumOrExit(
   flagName: string,
   value: string,
   allowed: readonly string[],
-  jsonFlag: boolean,
+  ctx: OutputContext,
   code: string
 ): void {
   if (allowed.includes(value)) return;
   const msg = `invalid ${flagName} value: ${value}. Allowed: ${allowed.join(", ")}`;
-  if (jsonFlag) {
-    writeJsonError(code, msg, { value, allowed: [...allowed] });
-  } else {
-    writePlainError(`${code}: ${msg}`);
-  }
-  process.exit(1);
+  emit({ ok: false, code, message: msg, details: { value, allowed: [...allowed] } }, ctx);
 }

@@ -1,4 +1,5 @@
 import { shouldColor } from "./color.ts";
+import { TasksError } from "../store.ts";
 
 /**
  * Output context resolved once per invocation. `json` selects the JSON-mode
@@ -41,6 +42,22 @@ export function outputContext(rest: string[]): OutputContext {
     json: rest.includes("--json"),
     color: shouldColor(rest.includes("--no-color")),
   };
+}
+
+/**
+ * Convert a caught error into a failure result. A `TasksError` carries its
+ * `code`/`message`/`details` through; `plainFormat` selects the stderr shape
+ * ("raw" for already-prefixed messages, e.g. the flock guard). Anything else
+ * is rethrown unchanged.
+ */
+export function failFromError(
+  err: unknown,
+  plainFormat: "prefixed" | "raw" = "prefixed"
+): Extract<CommandResult, { ok: false }> {
+  if (err instanceof TasksError) {
+    return { ok: false, code: err.code, message: err.message, details: err.details, plainFormat };
+  }
+  throw err;
 }
 
 /**

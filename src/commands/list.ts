@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { COLUMNS, findAllTasks, findArchivedTasks, resolveStoreDir } from "../store.ts";
 import { renderList, computeBlockedBy } from "../render.ts";
-import { writeJsonError, writePlainError } from "../cli/errors.ts";
+import { emit, outputContext } from "../cli/output.ts";
 import { shouldColor } from "../cli/color.ts";
 import { applyDoneCutoff, withAcceptanceCriteria } from "../cli/filters.ts";
 import { parseSinceDays, validateEnumOrExit } from "../cli/validation.ts";
@@ -11,7 +11,7 @@ const VALID_ATTENDANCE = ["attended", "unattended"] as const;
 const VALID_EFFORT = ["low", "medium", "high"] as const;
 
 export async function run(rest: string[]): Promise<void> {
-  const jsonFlag = rest.includes("--json");
+  const ctx = outputContext(rest);
   const noColorFlag = rest.includes("--no-color");
   const allFlag = rest.includes("--all");
   const archivedFlag = rest.includes("--archived");
@@ -22,12 +22,7 @@ export async function run(rest: string[]): Promise<void> {
     const parsed = parseSinceDays(sinceVal);
     if (parsed === null) {
       const msg = `invalid --since value: ${sinceVal}. Expected format: <N>d (e.g. 7d, 30d)`;
-      if (jsonFlag) {
-        writeJsonError("INVALID_SINCE", msg, { value: sinceVal });
-      } else {
-        writePlainError(`INVALID_SINCE: ${msg}`);
-      }
-      process.exit(1);
+      emit({ ok: false, code: "INVALID_SINCE", message: msg, details: { value: sinceVal } }, ctx);
     }
     sinceDays = parsed;
   }
@@ -39,32 +34,22 @@ export async function run(rest: string[]): Promise<void> {
   for (const col of columnFilters) {
     if (!COLUMNS.includes(col)) {
       const msg = `unknown column: ${col}. Valid columns: ${COLUMNS.join(", ")}`;
-      if (jsonFlag) {
-        writeJsonError("UNKNOWN_COLUMN", msg, { column: col, valid: COLUMNS });
-      } else {
-        writePlainError(`UNKNOWN_COLUMN: ${msg}`);
-      }
-      process.exit(1);
+      emit({ ok: false, code: "UNKNOWN_COLUMN", message: msg, details: { column: col, valid: COLUMNS } }, ctx);
     }
   }
 
   if (attendanceFilter !== undefined) {
-    validateEnumOrExit("--attendance", attendanceFilter, VALID_ATTENDANCE, jsonFlag, "INVALID_ATTENDANCE");
+    validateEnumOrExit("--attendance", attendanceFilter, VALID_ATTENDANCE, ctx, "INVALID_ATTENDANCE");
   }
   if (effortFilter !== undefined) {
-    validateEnumOrExit("--effort", effortFilter, VALID_EFFORT, jsonFlag, "INVALID_EFFORT");
+    validateEnumOrExit("--effort", effortFilter, VALID_EFFORT, ctx, "INVALID_EFFORT");
   }
 
   const dir = resolveStoreDir(process.cwd());
 
   if (!existsSync(dir)) {
     const msg = "store not initialized; run `tasks new` to create it";
-    if (jsonFlag) {
-      writeJsonError("NOT_INITIALIZED", msg, {});
-    } else {
-      writePlainError(`NOT_INITIALIZED: ${msg}`);
-    }
-    process.exit(1);
+    emit({ ok: false, code: "NOT_INITIALIZED", message: msg }, ctx);
   }
 
   const liveTasks = findAllTasks(dir);
@@ -86,7 +71,7 @@ export async function run(rest: string[]): Promise<void> {
     tasks = tasks.filter((t) => t.effort === effortFilter);
   }
 
-  if (jsonFlag) {
+  if (ctx.json) {
     const decorated = tasks.map((t) => ({
       ...withAcceptanceCriteria(t),
       blockedBy: blockedBy.get(t.uuid) ?? [],

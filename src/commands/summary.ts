@@ -6,7 +6,7 @@ import {
   resolveStoreDir,
   type TaskData,
 } from "../store.ts";
-import { writeJsonError, writePlainError } from "../cli/errors.ts";
+import { emit, outputContext } from "../cli/output.ts";
 import { getFlagValue } from "../cli/args.ts";
 import { parseSinceDays } from "../cli/validation.ts";
 
@@ -56,11 +56,10 @@ async function readHeadSha(dir: string): Promise<string> {
 }
 
 export async function run(rest: string[]): Promise<void> {
-  const jsonFlag = rest.includes("--json");
+  const ctx = outputContext(rest);
 
-  if (!jsonFlag) {
-    writePlainError("MISSING_FIELD: tasks summary requires --json");
-    process.exit(1);
+  if (!ctx.json) {
+    emit({ ok: false, code: "MISSING_FIELD", message: "tasks summary requires --json" }, ctx);
   }
 
   // Parse --recent N
@@ -69,12 +68,15 @@ export async function run(rest: string[]): Promise<void> {
   if (recentVal !== undefined) {
     const parsed = parseInt(recentVal, 10);
     if (!Number.isInteger(parsed) || isNaN(parsed) || parsed <= 0 || String(parsed) !== recentVal) {
-      writeJsonError(
-        "INVALID_ARG",
-        `invalid --recent value: ${recentVal}. Expected a positive integer`,
-        { value: recentVal },
+      emit(
+        {
+          ok: false,
+          code: "INVALID_ARG",
+          message: `invalid --recent value: ${recentVal}. Expected a positive integer`,
+          details: { value: recentVal },
+        },
+        ctx,
       );
-      process.exit(1);
     }
     recentCount = parsed;
   }
@@ -85,24 +87,25 @@ export async function run(rest: string[]): Promise<void> {
   if (staleVal !== undefined) {
     const parsed = parseSinceDays(staleVal);
     if (parsed === null) {
-      writeJsonError(
-        "INVALID_ARG",
-        `invalid --stale value: ${staleVal}. Expected format: <N>d (e.g. 14d, 30d)`,
-        { value: staleVal },
+      emit(
+        {
+          ok: false,
+          code: "INVALID_ARG",
+          message: `invalid --stale value: ${staleVal}. Expected format: <N>d (e.g. 14d, 30d)`,
+          details: { value: staleVal },
+        },
+        ctx,
       );
-      process.exit(1);
     }
     staleDays = parsed;
   }
 
   const dir = resolveStoreDir(process.cwd());
   if (!existsSync(dir)) {
-    writeJsonError(
-      "NOT_INITIALIZED",
-      "store not initialized; run `tasks init` to create it",
-      {},
+    emit(
+      { ok: false, code: "NOT_INITIALIZED", message: "store not initialized; run `tasks init` to create it" },
+      ctx,
     );
-    process.exit(1);
   }
 
   const liveTasks = findAllTasks(dir);

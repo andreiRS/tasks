@@ -1,14 +1,14 @@
 import { existsSync } from "node:fs";
 import { findAllTasks, findArchivedTasks, groupTasksByColumn, resolveStoreDir, type TaskData } from "../store.ts";
 import { renderBoard, computeBlockedBy, BOARD_DEFAULT_WIDTH } from "../render.ts";
-import { writeJsonError, writePlainError } from "../cli/errors.ts";
+import { emit, outputContext } from "../cli/output.ts";
 import { shouldColor } from "../cli/color.ts";
 import { applyDoneCutoff, withAcceptanceCriteria } from "../cli/filters.ts";
 import { parseSinceDays } from "../cli/validation.ts";
 import { getFlagValue } from "../cli/args.ts";
 
 export async function run(rest: string[]): Promise<void> {
-  const jsonFlag = rest.includes("--json");
+  const ctx = outputContext(rest);
   const noColorFlag = rest.includes("--no-color");
   const allFlag = rest.includes("--all");
 
@@ -18,12 +18,7 @@ export async function run(rest: string[]): Promise<void> {
     const parsed = parseSinceDays(sinceVal);
     if (parsed === null) {
       const msg = `invalid --since value: ${sinceVal}. Expected format: <N>d (e.g. 7d, 30d)`;
-      if (jsonFlag) {
-        writeJsonError("INVALID_SINCE", msg, { value: sinceVal });
-      } else {
-        writePlainError(`INVALID_SINCE: ${msg}`);
-      }
-      process.exit(1);
+      emit({ ok: false, code: "INVALID_SINCE", message: msg, details: { value: sinceVal } }, ctx);
     }
     sinceDays = parsed;
   }
@@ -32,12 +27,7 @@ export async function run(rest: string[]): Promise<void> {
 
   if (!existsSync(dir)) {
     const msg = "store not initialized; run `tasks new` to create it";
-    if (jsonFlag) {
-      writeJsonError("NOT_INITIALIZED", msg, {});
-    } else {
-      writePlainError(`NOT_INITIALIZED: ${msg}`);
-    }
-    process.exit(1);
+    emit({ ok: false, code: "NOT_INITIALIZED", message: msg }, ctx);
   }
 
   const liveTasks = findAllTasks(dir);
@@ -49,7 +39,7 @@ export async function run(rest: string[]): Promise<void> {
 
   const grouped = groupTasksByColumn(tasks);
 
-  if (jsonFlag) {
+  if (ctx.json) {
     const groupedWithAc: Record<
       string,
       Array<TaskData & { acceptance_criteria: string; blockedBy: number[] }>

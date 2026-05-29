@@ -1,12 +1,12 @@
 import { createTask, ensureStore, findAllTasks, findFlockOrFail, isStoreDirty, storeDir, type EditorRunner, type TaskData } from "../store.ts";
-import { handleTasksError, writeJsonError, writePlainError } from "../cli/errors.ts";
+import { emit, failFromError, outputContext } from "../cli/output.ts";
 import { validateEnumOrExit, validateTitle } from "../cli/validation.ts";
 import { collectRepeated } from "../cli/args.ts";
 
 const VALID_EFFORT = ["low", "medium", "high"] as const;
 
 export async function run(rest: string[]): Promise<void> {
-  const jsonFlag = rest.includes("--json");
+  const ctx = outputContext(rest);
   const unattendedFlag = rest.includes("--unattended");
   const editFlag = rest.includes("--edit");
 
@@ -26,16 +26,11 @@ export async function run(rest: string[]): Promise<void> {
 
   if (editFlag && bodyFromStdin) {
     const msg = "--edit and --body - are mutually exclusive; use one or the other";
-    if (jsonFlag) {
-      writeJsonError("CONFLICT", msg, {});
-    } else {
-      process.stderr.write(`tasks: CONFLICT: ${msg}\n`);
-    }
-    process.exit(1);
+    emit({ ok: false, code: "CONFLICT", message: msg }, ctx);
   }
 
   if (effortValue !== undefined) {
-    validateEnumOrExit("--effort", effortValue, VALID_EFFORT, jsonFlag, "INVALID_EFFORT");
+    validateEnumOrExit("--effort", effortValue, VALID_EFFORT, ctx, "INVALID_EFFORT");
   }
 
   // Collect the title: first positional arg that isn't a flag or flag value.
@@ -56,15 +51,17 @@ export async function run(rest: string[]): Promise<void> {
 
   const titleError = validateTitle(title);
   if (titleError !== null) {
-    process.stderr.write(`tasks: INVALID_TITLE: ${titleError}\n`);
-    process.exit(1);
+    // Pre-existing quirk: `new` reports INVALID_TITLE as plain text even in
+    // --json mode (unlike `set`). Preserved byte-for-byte via a forced-plain
+    // context; normalising it is a separate follow-up.
+    emit({ ok: false, code: "INVALID_TITLE", message: titleError }, { json: false, color: ctx.color });
   }
 
   // Check flock availability BEFORE any store/git work.
   try {
     findFlockOrFail();
   } catch (err) {
-    handleTasksError(err, jsonFlag, "raw");
+    emit(failFromError(err, "raw"), ctx);
   }
 
   const dir = storeDir(process.cwd());
@@ -72,12 +69,7 @@ export async function run(rest: string[]): Promise<void> {
 
   if (await isStoreDirty(dir)) {
     const msg = "store working tree is dirty; commit or discard pending changes before running mutating commands";
-    if (jsonFlag) {
-      writeJsonError("STORE_DIRTY", msg, {});
-    } else {
-      process.stderr.write(`tasks: STORE_DIRTY: ${msg}\n`);
-    }
-    process.exit(1);
+    emit({ ok: false, code: "STORE_DIRTY", message: msg }, ctx);
   }
 
   // Resolve --deps refs to UUIDs (need the store to exist for this).
@@ -95,12 +87,7 @@ export async function run(rest: string[]): Promise<void> {
       }
       if (!found) {
         const msg = `dep not found: ${ref}`;
-        if (jsonFlag) {
-          writeJsonError("UNKNOWN_UUID", msg, { uuid: ref });
-        } else {
-          process.stderr.write(`tasks: UNKNOWN_UUID: ${msg}\n`);
-        }
-        process.exit(1);
+        emit({ ok: false, code: "UNKNOWN_UUID", message: msg, details: { uuid: ref } }, ctx);
       }
       resolvedDepUuids.push(found.uuid);
     }
@@ -116,12 +103,7 @@ export async function run(rest: string[]): Promise<void> {
     const editorEnv = process.env.EDITOR ?? process.env.VISUAL;
     if (!editorEnv || editorEnv.trim() === "") {
       const msg = "$EDITOR is not set; set EDITOR to your editor (e.g. vim, nano) and retry";
-      if (jsonFlag) {
-        writeJsonError("NO_EDITOR", msg, {});
-      } else {
-        writePlainError(`NO_EDITOR: ${msg}`);
-      }
-      process.exit(1);
+      emit({ ok: false, code: "NO_EDITOR", message: msg }, ctx);
     }
     editorRunner = async (filePath: string) => {
       const proc = Bun.spawn(["sh", "-c", `${editorEnv} "$1"`, "sh", filePath], {
@@ -143,6 +125,6 @@ export async function run(rest: string[]): Promise<void> {
     });
     process.stdout.write(`task: new #${id}: ${title}\n`);
   } catch (err) {
-    handleTasksError(err, jsonFlag);
+    emit(failFromError(err), ctx);
   }
 }

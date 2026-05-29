@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { findAllTasks, findArchivedTasks, resolveStoreDir, type TaskData } from "../store.ts";
 import { renderTask } from "../render.ts";
-import { writeJsonError, writePlainError } from "../cli/errors.ts";
+import { emit, outputContext } from "../cli/output.ts";
 import { shouldColor } from "../cli/color.ts";
 import { withAcceptanceCriteria } from "../cli/filters.ts";
 import { validateEnumOrExit } from "../cli/validation.ts";
@@ -10,7 +10,7 @@ import { getFlagValue } from "../cli/args.ts";
 const VALID_ATTENDANCE = ["attended", "unattended"] as const;
 
 export async function run(rest: string[]): Promise<void> {
-  const jsonFlag = rest.includes("--json");
+  const ctx = outputContext(rest);
   const noColorFlag = rest.includes("--no-color");
   const unattendedFlag = rest.includes("--unattended");
 
@@ -18,16 +18,11 @@ export async function run(rest: string[]): Promise<void> {
 
   if (unattendedFlag && attendanceFilter !== undefined && attendanceFilter !== "unattended") {
     const msg = `conflict: --unattended and --attendance ${attendanceFilter} are contradictory; --unattended means --attendance unattended`;
-    if (jsonFlag) {
-      writeJsonError("CONFLICT", msg, { unattended: true, attendance: attendanceFilter });
-    } else {
-      writePlainError(`CONFLICT: ${msg}`);
-    }
-    process.exit(1);
+    emit({ ok: false, code: "CONFLICT", message: msg, details: { unattended: true, attendance: attendanceFilter } }, ctx);
   }
 
   if (attendanceFilter !== undefined) {
-    validateEnumOrExit("--attendance", attendanceFilter, VALID_ATTENDANCE, jsonFlag, "INVALID_ATTENDANCE");
+    validateEnumOrExit("--attendance", attendanceFilter, VALID_ATTENDANCE, ctx, "INVALID_ATTENDANCE");
   }
 
   const effectiveAttendance: string | undefined = unattendedFlag ? "unattended" : attendanceFilter;
@@ -36,12 +31,7 @@ export async function run(rest: string[]): Promise<void> {
 
   if (!existsSync(dir)) {
     const msg = "no ready task found";
-    if (jsonFlag) {
-      writeJsonError("NO_READY_TASK", msg, {});
-    } else {
-      writePlainError(`NO_READY_TASK: ${msg}`);
-    }
-    process.exit(1);
+    emit({ ok: false, code: "NO_READY_TASK", message: msg }, ctx);
   }
 
   const liveTasks = findAllTasks(dir);
@@ -64,12 +54,7 @@ export async function run(rest: string[]): Promise<void> {
 
   if (candidates.length === 0) {
     const msg = "no ready task found";
-    if (jsonFlag) {
-      writeJsonError("NO_READY_TASK", msg, {});
-    } else {
-      writePlainError(`NO_READY_TASK: ${msg}`);
-    }
-    process.exit(1);
+    emit({ ok: false, code: "NO_READY_TASK", message: msg }, ctx);
   }
 
   candidates.sort((a, b) => {
@@ -91,7 +76,7 @@ export async function run(rest: string[]): Promise<void> {
     .sort((a, b) => a.id - b.id)
     .map((t) => ({ uuid: t.uuid, id: t.id, title: t.title }));
 
-  if (jsonFlag) {
+  if (ctx.json) {
     process.stdout.write(JSON.stringify({ ...withAcceptanceCriteria(task), deps_out, deps_in }) + "\n");
   } else {
     process.stdout.write(renderTask(task, { color: shouldColor(noColorFlag), deps_out, deps_in }));

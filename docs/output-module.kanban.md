@@ -6,16 +6,6 @@ kanban-plugin: board
 
 ## Backlog
 
-- [ ] **2 · Build the output module + unified failure path**
-	**Attendance:** unattended  ·  **Blocked by:** slice 1
-	**What to build:** Implement the output module to the agreed interface and route every command's failure through it. Replace the per-command error branching (`writeJsonError` / `writePlainError` / `handleTasksError`) so a `TasksError` becomes the Error envelope on stderr with the right non-zero exit in JSON mode, and a plain `CODE: message` line otherwise. One place now owns failure output and exit codes; `cli/errors.ts` folds inward. Commands still produce their success output the old way for now — only the failure path moves.
-	**Acceptance:**
-	- [ ] Output module emits the Error envelope and plain error identically to today
-	- [ ] All commands route failures through the module
-	- [ ] Exit codes unchanged across every error path
-	- [ ] `cli/errors.ts` has no remaining callers for the failure path
-	- [ ] `bun test` green
-
 - [ ] **3 · Migrate Read commands to return a Result**
 	**Attendance:** unattended  ·  **Blocked by:** slice 2
 	**What to build:** Convert the Read commands — show, list, next, board, doctor, export, summary — so each returns a success Result instead of choosing JSON-vs-text in place. The output module renders the JSON payload or the text form via the Renderer. The JSON mode output (including `acceptance_criteria`, blockedBy, Export/Summary envelopes) and the human text are byte-for-byte what they are today.
@@ -50,6 +40,10 @@ kanban-plugin: board
 
 
 ## Done
+
+- [x] **2 · Build the output module + unified failure path**
+	**Attendance:** unattended  ·  **Blocked by:** slice 1
+	**Delivered:** `emit()` + `failFromError()` implemented; every command's failure path routes through the module. Shared helpers `validateEnumOrExit` (validation.ts) and `flockGuard`/`ensureCleanStore`/`mutatingPreamble` (preflight.ts) now take `OutputContext` and emit. `cli/errors.ts` has zero external callers (dead, deleted in slice 5). The one quirk — `new`'s always-plain `INVALID_TITLE` even in `--json` — preserved via a forced-plain context. Success paths untouched. `bun test` green (331 pass).
 
 - [x] **1 · Decide the Result + output-module interface**
 	**Attendance:** attended (design review)  ·  **Blocked by:** none

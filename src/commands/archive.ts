@@ -1,11 +1,11 @@
 import { archiveTasks } from "../store.ts";
-import { handleTasksError, writeJsonError, writePlainError } from "../cli/errors.ts";
+import { emit, failFromError, outputContext } from "../cli/output.ts";
 import { mutatingPreamble } from "../cli/preflight.ts";
 import { parseSinceDays } from "../cli/validation.ts";
 import { getFlagValue } from "../cli/args.ts";
 
 export async function run(rest: string[]): Promise<void> {
-  const jsonFlag = rest.includes("--json");
+  const ctx = outputContext(rest);
   const beforeVal = getFlagValue(rest, "--before");
   const positional = rest.filter((a, i, arr) => {
     if (a === "--json") return false;
@@ -19,12 +19,7 @@ export async function run(rest: string[]): Promise<void> {
     const days = parseSinceDays(beforeVal);
     if (days === null) {
       const msg = `invalid --before value: ${beforeVal}. Expected format: <N>d (e.g. 7d, 30d)`;
-      if (jsonFlag) {
-        writeJsonError("INVALID_SINCE", msg, { value: beforeVal });
-      } else {
-        writePlainError(`INVALID_SINCE: ${msg}`);
-      }
-      process.exit(1);
+      emit({ ok: false, code: "INVALID_SINCE", message: msg, details: { value: beforeVal } }, ctx);
     }
     before = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   }
@@ -33,26 +28,21 @@ export async function run(rest: string[]): Promise<void> {
 
   if (idOrUuid && before !== undefined) {
     const msg = "tasks archive: <id|uuid> and --before are mutually exclusive";
-    if (jsonFlag) {
-      writeJsonError("MISSING_FIELD", msg, {});
-    } else {
-      writePlainError(`MISSING_FIELD: ${msg}`);
-    }
-    process.exit(1);
+    emit({ ok: false, code: "MISSING_FIELD", message: msg }, ctx);
   }
 
-  const dir = await mutatingPreamble(jsonFlag);
+  const dir = await mutatingPreamble(ctx);
 
   try {
     const { archived } = await archiveTasks(dir, { idOrUuid, before });
     if (archived.length === 0) {
       process.stderr.write("tasks: nothing to archive\n");
-      if (jsonFlag) {
+      if (ctx.json) {
         process.stdout.write(JSON.stringify({ ok: true, archived: [] }) + "\n");
       }
       return;
     }
-    if (jsonFlag) {
+    if (ctx.json) {
       process.stdout.write(
         JSON.stringify({
           ok: true,
@@ -65,6 +55,6 @@ export async function run(rest: string[]): Promise<void> {
       }
     }
   } catch (err) {
-    handleTasksError(err, jsonFlag);
+    emit(failFromError(err), ctx);
   }
 }
