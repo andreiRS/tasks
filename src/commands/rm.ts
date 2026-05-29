@@ -14,15 +14,17 @@ export async function run(rest: string[]): Promise<void> {
 
   const dir = await mutatingPreamble(ctx);
 
+  let rmTask: Awaited<ReturnType<typeof removeTask>>["task"];
+  let affected: Awaited<ReturnType<typeof removeTask>>["affected"];
   try {
-    const { task: rmTask, affected } = await removeTask(dir, idOrUuid, forceFlag);
-    for (const t of affected) {
-      process.stderr.write(`affected: #${t.id} ${t.title}\n`);
-    }
-    if (ctx.json) {
-      process.stdout.write(JSON.stringify({ ok: true, id: rmTask.id, uuid: rmTask.uuid, forced: forceFlag, cascaded: affected.map((t) => t.uuid) }) + "\n");
-    }
+    ({ task: rmTask, affected } = await removeTask(dir, idOrUuid, forceFlag));
   } catch (err) {
     emit(failFromError(err), ctx);
   }
+
+  // affected stderr side-channel runs in BOTH modes.
+  for (const t of affected!) {
+    process.stderr.write(`affected: #${t.id} ${t.title}\n`);
+  }
+  emit({ ok: true, json: { ok: true, id: rmTask!.id, uuid: rmTask!.uuid, forced: forceFlag, cascaded: affected!.map((t) => t.uuid) } }, ctx);
 }

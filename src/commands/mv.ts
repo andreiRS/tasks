@@ -1,4 +1,4 @@
-import { COLUMNS, findTask, moveTask, type TaskData } from "../store.ts";
+import { COLUMNS, findTask, moveTask } from "../store.ts";
 import { emit, failFromError, outputContext } from "../cli/output.ts";
 import { mutatingPreamble } from "../cli/preflight.ts";
 
@@ -19,10 +19,7 @@ export async function run(rest: string[]): Promise<void> {
 
   const dir = await mutatingPreamble(ctx);
 
-  let mvTaskBefore: TaskData | null = null;
-  if (ctx.json) {
-    mvTaskBefore = findTask(dir, idOrUuid);
-  }
+  const mvTaskBefore = findTask(dir, idOrUuid);
 
   try {
     await moveTask(dir, idOrUuid, targetColumn);
@@ -30,7 +27,6 @@ export async function run(rest: string[]): Promise<void> {
     emit(failFromError(err), ctx);
   }
 
-  if (ctx.json && mvTaskBefore) {
-    process.stdout.write(JSON.stringify({ ok: true, id: mvTaskBefore.id, uuid: mvTaskBefore.uuid, from: mvTaskBefore.column, to: targetColumn }) + "\n");
-  }
+  // mvTaskBefore is non-null here: moveTask succeeded, so the task existed.
+  emit({ ok: true, json: { ok: true, id: mvTaskBefore!.id, uuid: mvTaskBefore!.uuid, from: mvTaskBefore!.column, to: targetColumn } }, ctx);
 }

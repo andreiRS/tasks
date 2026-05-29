@@ -7,14 +7,20 @@ export async function run(rest: string[]): Promise<void> {
 
   const dir = await mutatingPreamble(ctx);
 
+  let revertSha: string;
+  let revertedSha: string;
   try {
-    const { revertSha, revertedSha } = await undoStore(dir);
-    if (ctx.json) {
-      process.stdout.write(JSON.stringify({ ok: true, reverted: revertedSha, revert: revertSha }) + "\n");
-    } else {
-      process.stdout.write(`tasks: undid ${revertedSha.slice(0, 7)} (revert ${revertSha.slice(0, 7)})\n`);
-    }
+    ({ revertSha, revertedSha } = await undoStore(dir));
   } catch (err) {
     emit(failFromError(err), ctx);
   }
+
+  emit(
+    {
+      ok: true,
+      json: { ok: true, reverted: revertedSha!, revert: revertSha! },
+      text: () => `tasks: undid ${revertedSha!.slice(0, 7)} (revert ${revertSha!.slice(0, 7)})\n`,
+    },
+    ctx,
+  );
 }

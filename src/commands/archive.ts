@@ -33,28 +33,24 @@ export async function run(rest: string[]): Promise<void> {
 
   const dir = await mutatingPreamble(ctx);
 
+  let archived: Awaited<ReturnType<typeof archiveTasks>>["archived"];
   try {
-    const { archived } = await archiveTasks(dir, { idOrUuid, before });
-    if (archived.length === 0) {
-      process.stderr.write("tasks: nothing to archive\n");
-      if (ctx.json) {
-        process.stdout.write(JSON.stringify({ ok: true, archived: [] }) + "\n");
-      }
-      return;
-    }
-    if (ctx.json) {
-      process.stdout.write(
-        JSON.stringify({
-          ok: true,
-          archived: archived.map((t) => ({ id: t.id, uuid: t.uuid, title: t.title })),
-        }) + "\n",
-      );
-    } else {
-      for (const t of archived) {
-        process.stdout.write(`archived #${t.id} ${t.title}\n`);
-      }
-    }
+    ({ archived } = await archiveTasks(dir, { idOrUuid, before }));
   } catch (err) {
     emit(failFromError(err), ctx);
   }
+
+  if (archived!.length === 0) {
+    process.stderr.write("tasks: nothing to archive\n");
+    emit({ ok: true, json: { ok: true, archived: [] } }, ctx);
+  }
+
+  emit(
+    {
+      ok: true,
+      json: { ok: true, archived: archived!.map((t) => ({ id: t.id, uuid: t.uuid, title: t.title })) },
+      text: () => archived!.map((t) => `archived #${t.id} ${t.title}\n`).join(""),
+    },
+    ctx,
+  );
 }

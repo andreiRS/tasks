@@ -9,15 +9,17 @@ export async function run(rest: string[]): Promise<void> {
 
   const dir = storeDir(process.cwd());
 
+  let created: boolean;
+  let path: string;
   try {
-    const { created, path } = await initStore(dir);
-    if (ctx.json) {
-      process.stdout.write(JSON.stringify({ ok: true, path, created }) + "\n");
-    } else if (!created) {
-      process.stderr.write(`tasks: store already exists at ${path}\n`);
-    }
-    // On fresh init, initStore already prints the "initialized store at" notice.
+    ({ created, path } = await initStore(dir));
   } catch (err) {
     emit(failFromError(err), ctx);
   }
+
+  // On fresh init, initStore already prints the "initialized store at" notice.
+  // The "already exists" notice goes to stderr as a side-channel (emit's
+  // success text would go to stdout).
+  if (!ctx.json && !created!) process.stderr.write(`tasks: store already exists at ${path!}\n`);
+  emit({ ok: true, json: { ok: true, path: path!, created: created! } }, ctx);
 }

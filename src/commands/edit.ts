@@ -1,4 +1,4 @@
-import { abortPendingEdits, editTask, ensureStore, findTask, storeDir, type TaskData } from "../store.ts";
+import { abortPendingEdits, editTask, ensureStore, findTask, storeDir } from "../store.ts";
 import { emit, failFromError, outputContext } from "../cli/output.ts";
 import { flockGuard } from "../cli/preflight.ts";
 
@@ -28,14 +28,12 @@ export async function run(rest: string[]): Promise<void> {
     emit({ ok: false, code: "NO_EDITOR", message: msg }, ctx);
   }
 
-  let editTaskBefore: TaskData | null = null;
-  if (ctx.json) {
-    editTaskBefore = findTask(dir, idOrUuid);
-  }
+  const editTaskBefore = findTask(dir, idOrUuid);
 
   // Edit is EXEMPT from STORE_DIRTY by PRD design.
+  let editResult: Awaited<ReturnType<typeof editTask>>;
   try {
-    const editResult = await editTask(dir, idOrUuid, async (filePath: string) => {
+    editResult = await editTask(dir, idOrUuid, async (filePath: string) => {
       const proc = Bun.spawn(["sh", "-c", `${editorEnv} "$1"`, "sh", filePath], {
         stdin: "inherit",
         stdout: "inherit",
@@ -43,10 +41,10 @@ export async function run(rest: string[]): Promise<void> {
       });
       return await proc.exited;
     });
-    if (ctx.json && editTaskBefore) {
-      process.stdout.write(JSON.stringify({ ok: true, id: editTaskBefore.id, uuid: editTaskBefore.uuid, changed: editResult.kind !== "noop" }) + "\n");
-    }
   } catch (err) {
     emit(failFromError(err), ctx);
   }
+
+  // editTaskBefore is non-null here: editTask succeeded, so the task existed.
+  emit({ ok: true, json: { ok: true, id: editTaskBefore!.id, uuid: editTaskBefore!.uuid, changed: editResult!.kind !== "noop" } }, ctx);
 }

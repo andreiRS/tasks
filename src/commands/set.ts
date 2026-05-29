@@ -1,4 +1,4 @@
-import { findTask, setTask, type TaskData } from "../store.ts";
+import { findTask, setTask } from "../store.ts";
 import { emit, failFromError, outputContext } from "../cli/output.ts";
 import { mutatingPreamble } from "../cli/preflight.ts";
 import { validateEnumOrExit, validateTitle } from "../cli/validation.ts";
@@ -55,10 +55,7 @@ export async function run(rest: string[]): Promise<void> {
 
   const dir = await mutatingPreamble(ctx);
 
-  let setTaskBefore: TaskData | null = null;
-  if (ctx.json) {
-    setTaskBefore = findTask(dir, subjectRef);
-  }
+  const setTaskBefore = findTask(dir, subjectRef);
 
   try {
     await setTask(dir, subjectRef, {
@@ -70,17 +67,17 @@ export async function run(rest: string[]): Promise<void> {
     emit(failFromError(err), ctx);
   }
 
-  if (ctx.json && setTaskBefore) {
-    const changed: Record<string, unknown> = {};
-    if (titlePresent && titleValue !== setTaskBefore.title) {
-      changed.title = titleValue;
-    }
-    if (attendanceValue !== undefined && attendanceValue !== setTaskBefore.attendance) {
-      changed.attendance = attendanceValue;
-    }
-    if (effortValue !== undefined && effortValue !== setTaskBefore.effort) {
-      changed.effort = effortValue;
-    }
-    process.stdout.write(JSON.stringify({ ok: true, id: setTaskBefore.id, uuid: setTaskBefore.uuid, changed }) + "\n");
+  // setTaskBefore is non-null here: setTask succeeded, so the task existed.
+  const before = setTaskBefore!;
+  const changed: Record<string, unknown> = {};
+  if (titlePresent && titleValue !== before.title) {
+    changed.title = titleValue;
   }
+  if (attendanceValue !== undefined && attendanceValue !== before.attendance) {
+    changed.attendance = attendanceValue;
+  }
+  if (effortValue !== undefined && effortValue !== before.effort) {
+    changed.effort = effortValue;
+  }
+  emit({ ok: true, json: { ok: true, id: before.id, uuid: before.uuid, changed } }, ctx);
 }

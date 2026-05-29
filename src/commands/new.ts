@@ -115,16 +115,20 @@ export async function run(rest: string[]): Promise<void> {
     };
   }
 
+  let id: number;
   try {
-    const id = await createTask(dir, title, {
+    id = await createTask(dir, title, {
       attendance: unattendedFlag ? "unattended" : undefined,
       effort: effortValue as "low" | "medium" | "high" | undefined,
       deps: resolvedDepUuids.length > 0 ? resolvedDepUuids : undefined,
       body: bodyContent,
       runEditor: editorRunner,
     });
-    process.stdout.write(`task: new #${id}: ${title}\n`);
   } catch (err) {
     emit(failFromError(err), ctx);
   }
+
+  // Pre-existing quirk: `new` prints the plain line even under --json and emits
+  // no JSON envelope. Preserved byte-for-byte via a forced-text context.
+  emit({ ok: true, text: () => `task: new #${id!}: ${title}\n` }, { json: false, color: ctx.color });
 }
