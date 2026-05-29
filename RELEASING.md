@@ -37,18 +37,28 @@ moving, so versions land deliberately, not on every merge.
 3. **Verify.** `bun test` green, `bun run src/cli.ts --version` prints
    the new version.
 4. **Commit.** Single commit, message `chore(release): vX.Y.Z`.
-5. **Tag from that commit.**
+5. **Tag from that commit and push.** Pushing the tag is what publishes
+   the release: the `release` workflow (`.github/workflows/release.yml`)
+   triggers on any `v*` tag.
    ```sh
    git tag -a vX.Y.Z -m "vX.Y.Z"
    git push origin main
    git push origin vX.Y.Z
    ```
-6. **Publish the GitHub Release.**
+6. **Let the workflow publish.** On the pushed tag it verifies the tag
+   matches `package.json`, re-runs `bun test` on macOS + Linux, builds
+   standalone binaries for all four targets (`darwin-arm64`,
+   `darwin-x64`, `linux-x64`, `linux-arm64`), extracts the matching
+   `## [X.Y.Z]` slice of `CHANGELOG.md` as the release notes, and creates
+   the GitHub Release with the binaries attached. Watch it:
    ```sh
-   gh release create vX.Y.Z --title "vX.Y.Z" --notes-from-tag
+   gh run watch
+   gh release view vX.Y.Z
    ```
-   Or use `--notes-file -` with the changelog slice piped in for richer
-   release notes.
+   Do **not** run `gh release create` by hand; it collides with the
+   workflow. If the workflow is ever down, the manual fallback is
+   `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file <slice>` plus
+   uploading binaries built with `bun run build`.
 7. **Open the next cycle.** Bump `package.json` to the next planned
    target (`0.(X+1).0` or `0.X.(Y+1)`) in a follow-up commit so the
    binary on `main` no longer claims to be the released version.
