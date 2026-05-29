@@ -1016,21 +1016,11 @@ export async function archiveTasks(
 
     mkdirSync(join(dir, ARCHIVE_DIR), { recursive: true });
 
-    const now = new Date().toISOString();
     for (const task of targets) {
-      const loc = findTaskFilename(dir, String(task.uuid));
-      if (!loc) continue;
-      const oldRelPath = `${loc.column}/${loc.filename}`;
-      const newRelPath = `${ARCHIVE_DIR}/${loc.filename}`;
-      const oldFilePath = join(dir, loc.column, loc.filename);
-      const raw = readFileSync(oldFilePath, "utf-8");
-      const updated = raw.replace(/^(updated_at:\s*)(.+)$/m, `$1${now}`);
-      writeFileSync(oldFilePath, updated, "utf-8");
-      await git(["add", oldRelPath], dir);
-      const mvExit = await git(["mv", oldRelPath, newRelPath], dir);
-      if (mvExit !== 0) {
-        throw new TasksError("GIT_ERROR", `git mv failed`, {});
-      }
+      const tf = loadTaskFileAt(dir, task);
+      if (!tf) continue;
+      tf.column = ARCHIVE_DIR;
+      await stageTaskFile(tf);
     }
 
     const subject = targets.length === 1
