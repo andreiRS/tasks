@@ -57,6 +57,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # macOS runners don't ship flock(1); the CLI shells out to it for every
+      # mutating command, so the test suite needs it on PATH. Linux runners
+      # already have it via util-linux. Mirrors the README install hint.
+      - name: Install flock (macOS)
+        if: runner.os == 'macOS'
+        run: brew install flock
+
       - name: Run tests
         run: bun test
 
