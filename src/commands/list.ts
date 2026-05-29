@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { COLUMNS, findAllTasks, findArchivedTasks, resolveStoreDir } from "../store.ts";
 import { renderList, computeBlockedBy } from "../render.ts";
 import { emit, outputContext } from "../cli/output.ts";
-import { shouldColor } from "../cli/color.ts";
 import { applyDoneCutoff, withAcceptanceCriteria } from "../cli/filters.ts";
 import { parseSinceDays, validateEnumOrExit } from "../cli/validation.ts";
 import { collectRepeated, getFlagValue } from "../cli/args.ts";
@@ -12,7 +11,6 @@ const VALID_EFFORT = ["low", "medium", "high"] as const;
 
 export async function run(rest: string[]): Promise<void> {
   const ctx = outputContext(rest);
-  const noColorFlag = rest.includes("--no-color");
   const allFlag = rest.includes("--all");
   const archivedFlag = rest.includes("--archived");
 
@@ -71,13 +69,16 @@ export async function run(rest: string[]): Promise<void> {
     tasks = tasks.filter((t) => t.effort === effortFilter);
   }
 
-  if (ctx.json) {
-    const decorated = tasks.map((t) => ({
-      ...withAcceptanceCriteria(t),
-      blockedBy: blockedBy.get(t.uuid) ?? [],
-    }));
-    process.stdout.write(JSON.stringify(decorated) + "\n");
-  } else {
-    process.stdout.write(renderList(tasks, { color: shouldColor(noColorFlag), blockedBy }));
-  }
+  const decorated = tasks.map((t) => ({
+    ...withAcceptanceCriteria(t),
+    blockedBy: blockedBy.get(t.uuid) ?? [],
+  }));
+  emit(
+    {
+      ok: true,
+      json: decorated,
+      text: (c) => renderList(tasks, { color: c.color, blockedBy }),
+    },
+    ctx,
+  );
 }

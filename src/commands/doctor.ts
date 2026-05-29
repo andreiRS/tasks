@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { COLUMNS, resolveStoreDir } from "../store.ts";
+import { emit, outputContext, type OutputContext } from "../cli/output.ts";
 
 /**
  * `tasks doctor` — read-only store diagnostics, plus `--clean` recovery.
@@ -28,20 +29,20 @@ import { COLUMNS, resolveStoreDir } from "../store.ts";
  *   Clean (clean): { store, stashed: false, already_clean: true }
  */
 export async function run(rest: string[]): Promise<void> {
+  const ctx = outputContext(rest);
   const clean = rest.includes("--clean");
-  const jsonFlag = rest.includes("--json");
   const dir = resolveStoreDir(process.cwd());
   const hasStore = existsSync(join(dir, ".git"));
 
   if (clean) {
-    await runClean(dir, hasStore, jsonFlag);
+    await runClean(dir, hasStore, ctx);
     return;
   }
 
-  await runReport(dir, hasStore, jsonFlag);
+  await runReport(dir, hasStore, ctx);
 }
 
-async function runReport(dir: string, hasStore: boolean, jsonFlag: boolean): Promise<void> {
+async function runReport(dir: string, hasStore: boolean, ctx: OutputContext): Promise<void> {
   let status = "";
   let stashes = 0;
 
@@ -51,52 +52,55 @@ async function runReport(dir: string, hasStore: boolean, jsonFlag: boolean): Pro
     stashes = stashList === "" ? 0 : stashList.split("\n").filter((l) => l.length > 0).length;
   }
 
-  if (jsonFlag) {
-    const statusEntries = parseStatusShort(status);
-    const payload = { store: dir, status: statusEntries, stashes };
-    process.stdout.write(JSON.stringify(payload) + "\n");
-    return;
-  }
+  const statusEntries = parseStatusShort(status);
 
-  const out: string[] = [];
-  out.push(`store: ${dir}`);
-  if (!hasStore) {
-    out.push("status: (store not initialised)");
-  } else {
-    out.push("status:");
-    if (status.length > 0) {
-      for (const line of status.split("\n")) {
-        if (line.length > 0) out.push(line);
-      }
-    }
-  }
-  out.push(`stashes: ${stashes}`);
-
-  process.stdout.write(out.join("\n") + "\n");
+  emit(
+    {
+      ok: true,
+      json: { store: dir, status: statusEntries, stashes },
+      text: () => {
+        const out: string[] = [];
+        out.push(`store: ${dir}`);
+        if (!hasStore) {
+          out.push("status: (store not initialised)");
+        } else {
+          out.push("status:");
+          if (status.length > 0) {
+            for (const line of status.split("\n")) {
+              if (line.length > 0) out.push(line);
+            }
+          }
+        }
+        out.push(`stashes: ${stashes}`);
+        return out.join("\n") + "\n";
+      },
+    },
+    ctx,
+  );
 }
 
-async function runClean(dir: string, hasStore: boolean, jsonFlag: boolean): Promise<void> {
+async function runClean(dir: string, hasStore: boolean, ctx: OutputContext): Promise<void> {
   if (!hasStore) {
-    if (jsonFlag) {
-      process.stdout.write(
-        JSON.stringify({ store: dir, stashed: false, already_clean: true }) + "\n",
-      );
-      return;
-    }
-    process.stdout.write(`store: ${dir}\nstore already clean\n`);
-    return;
+    emit(
+      {
+        ok: true,
+        json: { store: dir, stashed: false, already_clean: true },
+        text: () => `store: ${dir}\nstore already clean\n`,
+      },
+      ctx,
+    );
   }
 
   const status = await gitOut(dir, ["status", "--short"]);
   if (status.length === 0) {
-    if (jsonFlag) {
-      process.stdout.write(
-        JSON.stringify({ store: dir, stashed: false, already_clean: true }) + "\n",
-      );
-      return;
-    }
-    process.stdout.write(`store: ${dir}\nstore already clean\n`);
-    return;
+    emit(
+      {
+        ok: true,
+        json: { store: dir, stashed: false, already_clean: true },
+        text: () => `store: ${dir}\nstore already clean\n`,
+      },
+      ctx,
+    );
   }
 
   const ts = new Date().toISOString();
@@ -115,19 +119,21 @@ async function runClean(dir: string, hasStore: boolean, jsonFlag: boolean): Prom
     mkdirSync(join(dir, col), { recursive: true });
   }
 
-  if (jsonFlag) {
-    process.stdout.write(
-      JSON.stringify({ store: dir, stashed: true, stash_ref: "stash@{0}" }) + "\n",
-    );
-    return;
-  }
-
   // After a successful stash, the new entry is at stash@{0}.
-  const out: string[] = [];
-  out.push(`store: ${dir}`);
-  out.push("stashed: stash@{0}");
-  out.push("recover with: cd " + dir + " && git stash pop");
-  process.stdout.write(out.join("\n") + "\n");
+  emit(
+    {
+      ok: true,
+      json: { store: dir, stashed: true, stash_ref: "stash@{0}" },
+      text: () => {
+        const out: string[] = [];
+        out.push(`store: ${dir}`);
+        out.push("stashed: stash@{0}");
+        out.push("recover with: cd " + dir + " && git stash pop");
+        return out.join("\n") + "\n";
+      },
+    },
+    ctx,
+  );
 }
 
 /**

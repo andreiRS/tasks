@@ -222,5 +222,5 @@ export async function run(rest: string[]): Promise<void> {
     reverse_deps: reverseDeps,
   };
 
-  process.stdout.write(JSON.stringify(envelope) + "\n");
+  emit({ ok: true, json: envelope }, ctx);
 }

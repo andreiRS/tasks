@@ -2,14 +2,12 @@ import { existsSync } from "node:fs";
 import { findAllTasks, findArchivedTasks, groupTasksByColumn, resolveStoreDir, type TaskData } from "../store.ts";
 import { renderBoard, computeBlockedBy, BOARD_DEFAULT_WIDTH } from "../render.ts";
 import { emit, outputContext } from "../cli/output.ts";
-import { shouldColor } from "../cli/color.ts";
 import { applyDoneCutoff, withAcceptanceCriteria } from "../cli/filters.ts";
 import { parseSinceDays } from "../cli/validation.ts";
 import { getFlagValue } from "../cli/args.ts";
 
 export async function run(rest: string[]): Promise<void> {
   const ctx = outputContext(rest);
-  const noColorFlag = rest.includes("--no-color");
   const allFlag = rest.includes("--all");
 
   let sinceDays = 7;
@@ -39,23 +37,24 @@ export async function run(rest: string[]): Promise<void> {
 
   const grouped = groupTasksByColumn(tasks);
 
-  if (ctx.json) {
-    const groupedWithAc: Record<
-      string,
-      Array<TaskData & { acceptance_criteria: string; blockedBy: number[] }>
-    > = {};
-    for (const [col, list] of Object.entries(grouped)) {
-      groupedWithAc[col] = list.map((t) => ({
-        ...withAcceptanceCriteria(t),
-        blockedBy: blockedBy.get(t.uuid) ?? [],
-      }));
-    }
-    process.stdout.write(JSON.stringify(groupedWithAc) + "\n");
-  } else {
-    process.stdout.write(
-      renderBoard(grouped, { color: shouldColor(noColorFlag), blockedBy, width: resolveBoardWidth() }),
-    );
+  const groupedWithAc: Record<
+    string,
+    Array<TaskData & { acceptance_criteria: string; blockedBy: number[] }>
+  > = {};
+  for (const [col, list] of Object.entries(grouped)) {
+    groupedWithAc[col] = list.map((t) => ({
+      ...withAcceptanceCriteria(t),
+      blockedBy: blockedBy.get(t.uuid) ?? [],
+    }));
   }
+  emit(
+    {
+      ok: true,
+      json: groupedWithAc,
+      text: (c) => renderBoard(grouped, { color: c.color, blockedBy, width: resolveBoardWidth() }),
+    },
+    ctx,
+  );
 }
 
 /**

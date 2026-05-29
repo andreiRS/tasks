@@ -162,5 +162,5 @@ export async function run(rest: string[]): Promise<void> {
     stale,
   };
 
-  process.stdout.write(JSON.stringify(envelope) + "\n");
+  emit({ ok: true, json: envelope }, ctx);
 }

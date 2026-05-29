@@ -1,12 +1,10 @@
 import { findAllTasks, findArchivedTasks, findTask, resolveStoreDir, type TaskData } from "../store.ts";
 import { renderTask } from "../render.ts";
 import { emit, outputContext } from "../cli/output.ts";
-import { shouldColor } from "../cli/color.ts";
 import { withAcceptanceCriteria } from "../cli/filters.ts";
 
 export async function run(rest: string[]): Promise<void> {
   const ctx = outputContext(rest);
-  const noColorFlag = rest.includes("--no-color");
   const idOrUuid = rest.find((a) => a !== "--json" && a !== "--no-color") ?? "";
 
   if (!idOrUuid) {
@@ -40,9 +38,12 @@ export async function run(rest: string[]): Promise<void> {
     .sort((a, b) => a.id - b.id)
     .map((t) => ({ uuid: t.uuid, id: t.id, title: t.title }));
 
-  if (ctx.json) {
-    process.stdout.write(JSON.stringify({ ...withAcceptanceCriteria(task), deps_out, deps_in }) + "\n");
-  } else {
-    process.stdout.write(renderTask(task, { color: shouldColor(noColorFlag), deps_out, deps_in }));
-  }
+  emit(
+    {
+      ok: true,
+      json: { ...withAcceptanceCriteria(task), deps_out, deps_in },
+      text: (c) => renderTask(task, { color: c.color, deps_out, deps_in }),
+    },
+    ctx,
+  );
 }
