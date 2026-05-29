@@ -814,6 +814,26 @@ function loadTaskFile(dir: string, ref: string): TaskFile | null {
 }
 
 /**
+ * Load the file for an already-resolved TaskData, scanning only its known
+ * column so multi-file mutations don't re-scan the whole store. Returns null if
+ * the file can no longer be found (e.g. moved out from under us).
+ */
+function loadTaskFileAt(dir: string, task: TaskData): TaskFile | null {
+  const colDir = join(dir, task.column);
+  if (!existsSync(colDir)) return null;
+  for (const f of readdirSync(colDir).filter((n) => n.endsWith(".md"))) {
+    const raw = readFileSync(join(colDir, f), "utf-8");
+    const parts = raw.split(/^---\s*$/m);
+    if (parts.length < 3) continue;
+    const fm = yamlParse(parts[1]) as Record<string, unknown>;
+    if (fm.uuid === task.uuid) {
+      return readTaskFileAt(dir, task.column, f);
+    }
+  }
+  return null;
+}
+
+/**
  * Bump `updated_at`, write the (possibly renamed/relocated) TaskFile to disk,
  * and stage it. When the target path differs from the origin (slug change or
  * column move) the rename goes through `git mv` so history follows the file.
@@ -909,55 +929,26 @@ export async function removeTask(
       );
     }
 
-    // Determine the filename of the task to remove
-    const colDir = join(dir, task.column);
-    const files = readdirSync(colDir).filter((f) => f.endsWith(".md"));
-    const byShortId = /^\d+$/.test(idOrUuid);
-    const targetId = byShortId ? parseInt(idOrUuid, 10) : null;
-
-    let filename: string | null = null;
-    for (const f of files) {
-      const raw = readFileSync(join(colDir, f), "utf-8");
-      const parts = raw.split(/^---\s*$/m);
-      if (parts.length < 3) continue;
-      const fm = yamlParse(parts[1]) as Record<string, unknown>;
-      const matches = byShortId ? fm.id === targetId : fm.uuid === idOrUuid;
-      if (matches) {
-        filename = f;
-        break;
-      }
-    }
-
-    if (!filename) {
+    // Locate the file to remove.
+    const loc = findTaskFilename(dir, idOrUuid);
+    if (!loc) {
       throw new TasksError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
     }
 
-    // If force: strip the target uuid from each dependent's deps, rewrite + stage
+    // If force: strip the target uuid from each dependent's deps via the
+    // Document API and stage each (no commit yet) so the rewrites land in the
+    // same commit as the deletion below.
     if (force && dependents.length > 0) {
       for (const dep of dependents) {
-        const loc = findTaskFilename(dir, String(dep.uuid));
-        if (!loc) continue;
-        const depFilePath = join(dir, loc.column, loc.filename);
-        const raw = readFileSync(depFilePath, "utf-8");
-        const parts = raw.split(/^---\s*$/m);
-        if (parts.length < 3) continue;
-        const fm = yamlParse(parts[1]) as Record<string, unknown>;
-        const oldDeps = Array.isArray(fm.deps) ? (fm.deps as string[]) : [];
-        const newDeps = oldDeps.filter((u) => u !== task.uuid);
-        fm.deps = newDeps;
-        // Reconstruct file content: regenerate frontmatter with updated deps
-        // Replace only the deps line to preserve other field order/quoting
-        const depsYaml = newDeps.length === 0
-          ? "[]"
-          : `[${newDeps.map((u) => `"${u}"`).join(", ")}]`;
-        const newFmStr = parts[1].replace(/^deps:.*$/m, `deps: ${depsYaml}`);
-        const newContent = `---${newFmStr}---${parts.slice(2).join("---")}`;
-        writeFileSync(depFilePath, newContent, "utf-8");
-        await git(["add", `${loc.column}/${loc.filename}`], dir);
+        const depTf = loadTaskFileAt(dir, dep);
+        if (!depTf) continue;
+        const oldDeps = Array.isArray(depTf.get("deps")) ? (depTf.get("deps") as string[]) : [];
+        depTf.set("deps", oldDeps.filter((u) => u !== task.uuid));
+        await stageTaskFile(depTf);
       }
     }
 
-    const relPath = `${task.column}/${filename}`;
+    const relPath = `${loc.column}/${loc.filename}`;
 
     // git rm and commit (includes any staged dependent rewrites)
     const rmExit = await git(["rm", relPath], dir);
