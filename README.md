@@ -2,8 +2,6 @@
 
 A git-backed, file-per-task CLI for tracking work across six columns, designed so humans and Claude Code agents drive the same surface. Each task is a markdown file with YAML frontmatter, kept in a per-project git repository under `$TASKS_HOME`. Every mutation is an atomic commit, so the history is the audit log.
 
-> **Status:** v0.1.0 — first versioned release. M1 through M9 are complete. The store, validator (schema + DAG rules), all read commands (`show`, `list`, `board`, `next`, `export`, `summary`), and all write commands (`init`, `new`, `mv`, `edit`, `set`, `link`, `unlink`, `rm`, `undo`, `archive`), plus `doctor`, are live. See [CHANGELOG.md](./CHANGELOG.md) for the release history.
-
 ## Why
 
 - Tasks live in plain files you can grep, diff, and back up.
