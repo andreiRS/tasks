@@ -30,7 +30,7 @@ export async function run(rest: string[]): Promise<void> {
 
   const editTaskBefore = findTask(dir, idOrUuid);
 
-  // Edit is EXEMPT from STORE_DIRTY by PRD design.
+  // Edit is EXEMPT from STORE_DIRTY by design (CONTEXT.md "Edit session").
   let editResult: Awaited<ReturnType<typeof editTask>>;
   try {
     editResult = await editTask(dir, idOrUuid, async (filePath: string) => {

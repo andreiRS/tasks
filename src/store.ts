@@ -386,7 +386,8 @@ export async function abortPendingEdits(dir: string): Promise<void> {
  *   - { kind: "committed", titleChanged }: file changed, validated, committed.
  *
  * Errors throw TasksError with codes: NOT_FOUND, EDITOR_FAILED, INVALID_TITLE.
- * On INVALID_TITLE the bad file is left as-is on disk per PRD.
+ * On INVALID_TITLE the bad file is left as-is on disk (edit-recovery contract;
+ * see CONTEXT.md "Edit session").
  *
  * Exempt from the STORE_DIRTY guard. Acquires the flock.
  */

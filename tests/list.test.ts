@@ -110,7 +110,7 @@ test("tasks list --json on uninitialized store exits non-zero and does NOT creat
 test("tasks list --json on empty store returns []", async () => {
   // Initialize by creating then checking (tasks new auto-inits)
   // Easiest: run tasks new to init, capture ID, then we need an empty store.
-  // The PRD says read commands do NOT auto-init. So we must init via a write first.
+  // Read commands do NOT auto-init (CONTEXT.md "Read command"). So we must init via a write first.
   // Create a task, then verify list --json returns an array of length 1.
   // For EMPTY: use a freshly initialized store (tasks new auto-inits and creates a task).
   // We can't have zero tasks after auto-init via "new". Instead, let's check that

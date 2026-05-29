@@ -260,8 +260,8 @@ src/
   acceptance.ts   hand-rolled fence-aware Acceptance Criteria parser
   types.ts        shared types; errors.ts error codes; constants.ts columns + defaults
 tests/            CLI-level integration tests
-docs/adr/         Architecture Decision Records
-PRD.md            product spec + design rationale
+docs/adr/         Architecture Decision Records (decisions + rationale)
+docs/roadmap.md   non-goals and deferred decisions
 CONTEXT.md        glossary (canonical terms)
 CHANGELOG.md      release history
 RELEASING.md      release process

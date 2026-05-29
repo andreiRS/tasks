@@ -1,7 +1,7 @@
 /**
  * Hand-rolled, fence-aware, case-insensitive parser for the `## Acceptance
- * Criteria` section of a task body. Implements the PRD's "Acceptance Criteria
- * parsing rules" exactly:
+ * Criteria` section of a task body. Implements the Acceptance Criteria
+ * parsing rules exactly (see ADR-0007, CONTEXT.md "Acceptance Criteria"):
  *
  *   1. Heading match is case-insensitive on the literal string
  *      `acceptance criteria`, preceded by exactly `## ` at start of line.

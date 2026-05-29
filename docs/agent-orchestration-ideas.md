@@ -7,7 +7,7 @@ collaborating with them).
 Source material:
 - Anthropic, "Harness design for long-running apps"
 - Anthropic, "Effective harnesses for long-running agents"
-- Current `PRD.md`, `CONTEXT.md`, `docs/adr/`
+- Current `README.md`, `CONTEXT.md`, `docs/adr/`, `docs/roadmap.md`
 
 Items are ordered by estimated agent-side value (most → least). Each carries a
 short rationale, sketch, and the open questions worth resolving before code.
