@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { git } from "./git.ts";
+import { git, gitCommit } from "./git.ts";
 import { COLUMNS, ARCHIVE_DIR } from "./constants.ts";
 
 /**
@@ -31,7 +31,7 @@ export async function ensureStore(dir: string): Promise<boolean> {
   await git(["add", ".gitignore"], dir);
 
   // Initial commit (includes .gitignore)
-  await git(["commit", "-m", "init"], dir);
+  await gitCommit(dir, "init");
 
   process.stderr.write(`tasks: initialized store at ${dir}\n`);
   return true;
@@ -69,7 +69,7 @@ export async function initStore(dir: string): Promise<{ created: boolean; path: 
   writeFileSync(join(dir, ".gitignore"), STORE_GITIGNORE, "utf-8");
   writeFileSync(join(dir, "meta.yaml"), "next_id: 1\n", "utf-8");
   await git(["add", ".gitignore", "meta.yaml"], dir);
-  await git(["commit", "-m", "init"], dir);
+  await gitCommit(dir, "init");
 
   process.stderr.write(`tasks: initialized store at ${dir}\n`);
   return { created: true, path: dir };
@@ -108,5 +108,5 @@ async function upsertGitignore(dir: string): Promise<void> {
   if (current === STORE_GITIGNORE) return;
   writeFileSync(path, STORE_GITIGNORE, "utf-8");
   await git(["add", ".gitignore"], dir);
-  await git(["commit", "-m", "store: refresh .gitignore", "--", ".gitignore"], dir);
+  await gitCommit(dir, "store: refresh .gitignore", ["--", ".gitignore"]);
 }

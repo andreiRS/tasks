@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { parse as yamlParse, parseDocument, type Document } from "yaml";
-import { git } from "./git.ts";
+import { git, gitCommit } from "./git.ts";
 import { COLUMNS } from "./constants.ts";
 import type { TaskData } from "./types.ts";
 
@@ -206,7 +206,7 @@ export async function stageTaskFile(tf: TaskFile): Promise<void> {
 /** Stage a single TaskFile change and commit it in exactly one commit. */
 export async function commitTaskChange(tf: TaskFile, message: string): Promise<void> {
   await stageTaskFile(tf);
-  await git(["commit", "-m", message], tf.dir);
+  await gitCommit(tf.dir, message);
 }
 
 /**

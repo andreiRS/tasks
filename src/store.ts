@@ -5,7 +5,7 @@ import { parse as yamlParse } from "yaml";
 
 import { TasksError } from "./errors.ts";
 import { encodePath, storeDir, resolveStoreDir } from "./paths.ts";
-import { git, gitCapture } from "./git.ts";
+import { git, gitCapture, gitCommit, identityArgs } from "./git.ts";
 import {
   COLUMNS,
   ARCHIVE_DIR,
@@ -191,7 +191,7 @@ export async function createTask(dir: string, title: string, opts: CreateTaskOpt
     // Stage both files and commit. Exactly one commit per invocation, whether
     // or not the editor ran (and whether or not the editor mutated the file).
     await git(["add", taskRelPath, "meta.yaml"], dir);
-    await git(["commit", "-m", `task: new #${id}: ${title}`], dir);
+    await gitCommit(dir, `task: new #${id}: ${title}`);
 
     return id;
   });
@@ -293,7 +293,7 @@ export async function removeTask(
       throw new TasksError("GIT_ERROR", `git rm failed`, {});
     }
 
-    await git(["commit", "-m", `task: rm #${task.id}: ${task.title}`], dir);
+    await gitCommit(dir, `task: rm #${task.id}: ${task.title}`);
 
     return { task, affected: dependents };
   });
@@ -363,7 +363,7 @@ export async function archiveTasks(
     const subject = targets.length === 1
       ? `task: archive #${targets[0].id}: ${targets[0].title}`
       : `task: archive ${targets.length} tasks from done`;
-    await git(["commit", "-m", subject], dir);
+    await gitCommit(dir, subject);
 
     return { archived: targets };
   });
@@ -773,7 +773,9 @@ export async function undoStore(dir: string): Promise<{ revertSha: string; rever
       );
     }
 
-    const proc = Bun.spawn(["git", "-C", dir, "revert", "--no-edit", "HEAD"], {
+    // revert writes a commit, so it needs the same identity fallback as gitCommit.
+    const ident = await identityArgs(dir);
+    const proc = Bun.spawn(["git", "-C", dir, ...ident, "revert", "--no-edit", "HEAD"], {
       stdout: "pipe",
       stderr: "pipe",
     });
