@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, closeSync, openSync, renameSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import { stringify as yamlStringify, parse as yamlParse } from "yaml";
+import { stringify as yamlStringify, parse as yamlParse, parseDocument, type Document } from "yaml";
 
 /**
  * A structured error thrown by the tasks CLI store layer.
@@ -712,6 +712,134 @@ export function groupTasksByColumn(tasks: TaskData[]): Record<string, TaskData[]
     }
   }
   return grouped;
+}
+
+// ─── Deep Task-record write primitive ────────────────────────────────────────
+//
+// Two layers retire the regex frontmatter surgery + ad-hoc git dance that every
+// mutation used to re-derive (CONTEXT.md's claim that frontmatter is written via
+// the `yaml` Document API is made true here):
+//   - TaskFile  — a loaded task: on-disk location, parsed frontmatter Document,
+//                 raw body. Typed get/set over frontmatter, canonical slug
+//                 filename. No git.
+//   - stageTaskFile / commitTaskChange — write + bump updated_at + stage, doing
+//                 a `git mv` when the slug or column changed; commit exactly once.
+
+/** Current UTC timestamp in ISO 8601 (the canonical created_at/updated_at form). */
+function nowISO(): string {
+  return new Date().toISOString();
+}
+
+/**
+ * A loaded task file. Wraps the parsed frontmatter `Document` and the verbatim
+ * body, tracks where the file currently lives on disk, and computes the slug
+ * filename the task should have given its current title. Assign `.column` to
+ * relocate the task; call `.set("title", ...)` to trigger a slug rename. Holds
+ * no git knowledge — `commitTaskChange` owns the git dance.
+ */
+class TaskFile {
+  readonly dir: string;
+  readonly origColumn: string;
+  readonly origFilename: string;
+  /** Target column; assign to move the task to a different column. */
+  column: string;
+  private readonly doc: Document;
+  /** Everything after the closing `---` delimiter, preserved verbatim. */
+  private readonly bodyRaw: string;
+  private titleChanged = false;
+
+  constructor(dir: string, column: string, filename: string, doc: Document, bodyRaw: string) {
+    this.dir = dir;
+    this.origColumn = column;
+    this.origFilename = filename;
+    this.column = column;
+    this.doc = doc;
+    this.bodyRaw = bodyRaw;
+  }
+
+  get id(): number {
+    return this.doc.get("id") as number;
+  }
+  get uuid(): string {
+    return String(this.doc.get("uuid"));
+  }
+  get title(): string {
+    return this.doc.get("title") as string;
+  }
+
+  get(key: string): unknown {
+    return this.doc.get(key);
+  }
+
+  set(key: string, value: unknown): void {
+    this.doc.set(key, value);
+    if (key === "title") this.titleChanged = true;
+  }
+
+  /** The on-disk filename this task should have given its current title. */
+  targetFilename(): string {
+    if (!this.titleChanged) return this.origFilename;
+    return `${this.id}-${slugify(this.title)}.md`;
+  }
+
+  get origRelPath(): string {
+    return `${this.origColumn}/${this.origFilename}`;
+  }
+  get targetRelPath(): string {
+    return `${this.column}/${this.targetFilename()}`;
+  }
+
+  serialize(): string {
+    return `---\n${this.doc.toString()}---${this.bodyRaw}`;
+  }
+}
+
+/** Read the file at `column/filename` into a TaskFile handle (no resolution). */
+function readTaskFileAt(dir: string, column: string, filename: string): TaskFile {
+  const raw = readFileSync(join(dir, column, filename), "utf-8");
+  const parts = raw.split(/^---\s*$/m);
+  const doc = parseDocument(parts[1] ?? "");
+  const bodyRaw = parts.slice(2).join("---");
+  return new TaskFile(dir, column, filename, doc, bodyRaw);
+}
+
+/**
+ * Resolve a Short ID or UUID to its on-disk file and load it. Returns null if
+ * the task does not exist. Scans all columns (via `findTaskFilename`).
+ */
+function loadTaskFile(dir: string, ref: string): TaskFile | null {
+  const loc = findTaskFilename(dir, ref);
+  if (!loc) return null;
+  return readTaskFileAt(dir, loc.column, loc.filename);
+}
+
+/**
+ * Bump `updated_at`, write the (possibly renamed/relocated) TaskFile to disk,
+ * and stage it. When the target path differs from the origin (slug change or
+ * column move) the rename goes through `git mv` so history follows the file.
+ * Does NOT commit — callers commit, so multi-file mutations can stage several
+ * files into a single commit.
+ */
+async function stageTaskFile(tf: TaskFile): Promise<void> {
+  tf.set("updated_at", nowISO());
+  const origPath = join(tf.dir, tf.origColumn, tf.origFilename);
+  writeFileSync(origPath, tf.serialize(), "utf-8");
+  await git(["add", tf.origRelPath], tf.dir);
+  if (tf.origRelPath !== tf.targetRelPath) {
+    const mvExit = await git(["mv", tf.origRelPath, tf.targetRelPath], tf.dir);
+    if (mvExit !== 0) {
+      // Fallback: manual rename + add/rm (mirrors the prior setTask/editTask path).
+      renameSync(origPath, join(tf.dir, tf.targetRelPath));
+      await git(["rm", tf.origRelPath], tf.dir);
+      await git(["add", tf.targetRelPath], tf.dir);
+    }
+  }
+}
+
+/** Stage a single TaskFile change and commit it in exactly one commit. */
+async function commitTaskChange(tf: TaskFile, message: string): Promise<void> {
+  await stageTaskFile(tf);
+  await git(["commit", "-m", message], tf.dir);
 }
 
 /**
@@ -1530,89 +1658,30 @@ export async function setTask(
       );
     }
 
-    // Find the task on disk.
-    const loc = findTaskFilename(dir, idOrUuid);
-    if (!loc) {
+    // Find and load the task.
+    const tf = loadTaskFile(dir, idOrUuid);
+    if (!tf) {
       throw new TasksError("NOT_FOUND", `task not found: ${idOrUuid}`, { id: idOrUuid });
     }
-    const { column, filename } = loc;
-    const filePath = join(dir, column, filename);
-    const raw = readFileSync(filePath, "utf-8");
-    const parts = raw.split(/^---\s*$/m);
-    if (parts.length < 3) {
-      throw new TasksError("INVALID_TITLE", "task file is missing YAML frontmatter", {});
-    }
-    const oldFm = yamlParse(parts[1]) as Record<string, unknown>;
-    const id = oldFm.id as number;
-    const oldTitle = oldFm.title as string;
+    const id = tf.id;
 
-    // Build the new frontmatter text by substituting individual lines (preserve
-    // formatting/order of unrelated keys).
-    let newFm = parts[1];
+    // Apply provided fields. Setting the title triggers the slug rename inside
+    // commitTaskChange; the Document API handles quoting (no JSON.stringify hack).
+    const changed: string[] = [];
     if (opts.title !== undefined) {
-      // Replace the title line. Use a JSON-encoded scalar so colons/quotes in
-      // the title round-trip cleanly through yamlParse on the next read.
-      const encoded = JSON.stringify(opts.title);
-      newFm = newFm.replace(/^title:.*$/m, `title: ${encoded}`);
+      tf.set("title", opts.title);
+      changed.push("title");
     }
     if (opts.attendance !== undefined) {
-      if (/^attendance:/m.test(newFm)) {
-        newFm = newFm.replace(/^attendance:.*$/m, `attendance: ${opts.attendance}`);
-      } else {
-        // Append before trailing newline of frontmatter block.
-        newFm = newFm.replace(/\n?$/, `\nattendance: ${opts.attendance}\n`);
-      }
+      tf.set("attendance", opts.attendance);
+      changed.push("attendance");
     }
     if (opts.effort !== undefined) {
-      if (/^effort:/m.test(newFm)) {
-        newFm = newFm.replace(/^effort:.*$/m, `effort: ${opts.effort}`);
-      } else {
-        newFm = newFm.replace(/\n?$/, `\neffort: ${opts.effort}\n`);
-      }
-    }
-    // Bump updated_at.
-    const now = new Date().toISOString();
-    if (/^updated_at:/m.test(newFm)) {
-      newFm = newFm.replace(/^(updated_at:\s*)(.+)$/m, `$1${now}`);
-    } else {
-      newFm = newFm.replace(/\n?$/, `\nupdated_at: ${now}\n`);
+      tf.set("effort", opts.effort);
+      changed.push("effort");
     }
 
-    const newContent = `---${newFm}---${parts.slice(2).join("---")}`;
-    writeFileSync(filePath, newContent, "utf-8");
-
-    const oldRelPath = `${column}/${filename}`;
-    const titleChanged = opts.title !== undefined && opts.title !== oldTitle;
-
-    if (titleChanged) {
-      const newSlug = slugify(opts.title as string);
-      const newFilename = `${id}-${newSlug}.md`;
-      const newRelPath = `${column}/${newFilename}`;
-      const newFilePath = join(dir, column, newFilename);
-
-      if (newFilename !== filename) {
-        // Stage the content modification first so `git mv` sees it.
-        await git(["add", oldRelPath], dir);
-        const mvExit = await git(["mv", oldRelPath, newRelPath], dir);
-        if (mvExit !== 0) {
-          // Fall back: manual rename + git add/rm
-          renameSync(filePath, newFilePath);
-          await git(["rm", oldRelPath], dir);
-          await git(["add", newRelPath], dir);
-        }
-      } else {
-        await git(["add", oldRelPath], dir);
-      }
-    } else {
-      await git(["add", oldRelPath], dir);
-    }
-
-    // Build a descriptive commit message listing which fields changed.
-    const changed: string[] = [];
-    if (opts.title !== undefined) changed.push("title");
-    if (opts.attendance !== undefined) changed.push("attendance");
-    if (opts.effort !== undefined) changed.push("effort");
-    await git(["commit", "-m", `task: set #${id} ${changed.join(", ")}`], dir);
+    await commitTaskChange(tf, `task: set #${id} ${changed.join(", ")}`);
   });
 }
 
