@@ -1472,32 +1472,16 @@ export async function linkTask(
     );
     validateGraph(mutatedTasks);
 
-    // Find the subject file on disk
-    const loc = findTaskFilename(dir, subject.uuid);
-    if (!loc) {
+    // Find the subject file on disk and rewrite its deps via the Document API.
+    const tf = loadTaskFile(dir, subject.uuid);
+    if (!tf) {
       throw new TasksError("NOT_FOUND", `task not found: ${subjectRef}`, { id: subjectRef });
     }
-    const filePath = join(dir, loc.column, loc.filename);
-    const raw = readFileSync(filePath, "utf-8");
-    const parts = raw.split(/^---\s*$/m);
-    if (parts.length < 3) {
-      throw new TasksError("INVALID_TITLE", "task file is missing YAML frontmatter", {});
-    }
-
-    // Rewrite deps line in frontmatter and bump updated_at
-    const depsYaml =
-      updatedDeps.length === 0
-        ? "[]"
-        : `[${updatedDeps.map((u) => `"${u}"`).join(", ")}]`;
-    const now = new Date().toISOString();
-    let newFm = parts[1].replace(/^deps:.*$/m, `deps: ${depsYaml}`);
-    newFm = newFm.replace(/^(updated_at:\s*)(.+)$/m, `$1${now}`);
-    const newContent = `---${newFm}---${parts.slice(2).join("---")}`;
-    writeFileSync(filePath, newContent, "utf-8");
-
-    const relPath = `${loc.column}/${loc.filename}`;
-    await git(["add", relPath], dir);
-    await git(["commit", "-m", `task: link #${subject.id} depends-on ${newEdges.map((u) => `${u.slice(0, 8)}`).join(", ")}`], dir);
+    tf.set("deps", updatedDeps);
+    await commitTaskChange(
+      tf,
+      `task: link #${subject.id} depends-on ${newEdges.map((u) => u.slice(0, 8)).join(", ")}`,
+    );
   });
 }
 
@@ -1576,33 +1560,17 @@ export async function unlinkTask(
     );
     validateGraph(mutatedTasks);
 
-    // Find the subject file on disk
-    const loc = findTaskFilename(dir, subject.uuid);
-    if (!loc) {
+    // Find the subject file on disk and rewrite its deps via the Document API.
+    const tf = loadTaskFile(dir, subject.uuid);
+    if (!tf) {
       throw new TasksError("NOT_FOUND", `task not found: ${subjectRef}`, { id: subjectRef });
     }
-    const filePath = join(dir, loc.column, loc.filename);
-    const raw = readFileSync(filePath, "utf-8");
-    const parts = raw.split(/^---\s*$/m);
-    if (parts.length < 3) {
-      throw new TasksError("INVALID_TITLE", "task file is missing YAML frontmatter", {});
-    }
-
-    // Rewrite deps line in frontmatter and bump updated_at
-    const depsYaml =
-      updatedDeps.length === 0
-        ? "[]"
-        : `[${updatedDeps.map((u) => `"${u}"`).join(", ")}]`;
-    const now = new Date().toISOString();
-    let newFm = parts[1].replace(/^deps:.*$/m, `deps: ${depsYaml}`);
-    newFm = newFm.replace(/^(updated_at:\s*)(.+)$/m, `$1${now}`);
-    const newContent = `---${newFm}---${parts.slice(2).join("---")}`;
-    writeFileSync(filePath, newContent, "utf-8");
-
-    const relPath = `${loc.column}/${loc.filename}`;
-    await git(["add", relPath], dir);
+    tf.set("deps", updatedDeps);
     const removedUuids = subject.deps.filter((u) => removeSet.has(u));
-    await git(["commit", "-m", `task: unlink #${subject.id} remove ${removedUuids.map((u) => u.slice(0, 8)).join(", ")}`], dir);
+    await commitTaskChange(
+      tf,
+      `task: unlink #${subject.id} remove ${removedUuids.map((u) => u.slice(0, 8)).join(", ")}`,
+    );
   });
 }
 
