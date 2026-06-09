@@ -464,6 +464,28 @@ test("tasks new --title with a whitespace value exits non-zero with INVALID_TITL
   expect(stderr).toContain("INVALID_TITLE");
 });
 
+// --title is a real value-flag: it consumes its own value and coexists with
+// another value-flag (--body) without swallowing it or mis-parsing.
+test("tasks new --title coexists with --body without mis-parsing", async () => {
+  const { exitCode } = await runTasks(["new", "--title", "Wire up OAuth", "--body", "## AC"]);
+  expect(exitCode).toBe(0);
+
+  const fm = readSingleTaskFm("backlog");
+  expect(fm.title).toBe("Wire up OAuth");
+
+  const storeDir = getStoreDir();
+  const files = readdirSync(join(storeDir, "backlog")).filter((f) => f.endsWith(".md"));
+  const body = readTaskBodyByFilename("backlog", files[0]);
+  expect(body).toContain("## AC");
+});
+
+// --title with no value (flag at the end of args) validates the empty title.
+test("tasks new --title with no value exits non-zero with INVALID_TITLE", async () => {
+  const { exitCode, stderr } = await runTasks(["new", "--title"]);
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("INVALID_TITLE");
+});
+
 // ─── combined flags ───────────────────────────────────────────────────────────
 
 test("tasks new --unattended --effort low --deps writes all three to disk", async () => {
