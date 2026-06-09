@@ -82,12 +82,16 @@ Flags:
 - `--effort <low|medium|high>` — override the default `medium`.
 - `--deps <id|uuid>` — repeatable. Validates against the DAG.
 - `--edit` — open `$EDITOR` after creation; the create + body edit land in a single commit.
-- `--body -` — read the body from stdin.
+- `--body <text>` — set the body to a literal string.
+- `--body-file <path>` — read the body from a file; `--body-file -` reads stdin.
+
+`--body`, `--body-file`, and `--edit` are mutually exclusive (`CONFLICT`).
 
 ```sh
 tasks new "Wire up OAuth flow"
 tasks new "Ship release notes" --unattended --effort low --deps 3 --deps 5
-echo "## Acceptance Criteria\n- OAuth works" | tasks new "Wire up OAuth" --body -
+tasks new "Wire up OAuth" --body "## Acceptance Criteria\n- OAuth works"
+echo "## Acceptance Criteria\n- OAuth works" | tasks new "Wire up OAuth" --body-file -
 ```
 
 ### `tasks show <id|uuid> [--json] [--no-color]`
@@ -207,9 +211,9 @@ With `--json`, errors come back as:
 
 Without `--json`, errors are plain text on stderr. Either way the exit code is non-zero.
 
-Codes: `CONFLICT`, `CYCLE_DETECTED`, `DEP_EXISTS`, `EDITOR_FAILED`, `FLOCK_MISSING`, `GIT_ERROR`, `INVALID_ATTENDANCE`, `INVALID_COLUMN`, `INVALID_EFFORT`, `INVALID_SINCE`, `INVALID_TITLE`, `MISSING_FIELD`, `NO_EDITOR`, `NO_READY_TASK`, `NOT_FOUND`, `NOT_INITIALIZED`, `NOTHING_TO_UNDO`, `SELF_LINK`, `STORE_DIRTY`, `UNDO_FAILED`, `UNKNOWN_UUID`.
+Codes: `BODY_FILE_ERROR`, `CONFLICT`, `CYCLE_DETECTED`, `DEP_EXISTS`, `EDITOR_FAILED`, `FLOCK_MISSING`, `GIT_ERROR`, `INVALID_ATTENDANCE`, `INVALID_COLUMN`, `INVALID_EFFORT`, `INVALID_SINCE`, `INVALID_TITLE`, `MISSING_FIELD`, `NO_EDITOR`, `NO_READY_TASK`, `NOT_FOUND`, `NOT_INITIALIZED`, `NOTHING_TO_UNDO`, `SELF_LINK`, `STORE_DIRTY`, `UNDO_FAILED`, `UNKNOWN_UUID`.
 
-`CONFLICT` is emitted when `--edit` and `--body -` are used together on `new`, or when `--unattended` and `--attendance attended` are combined on `next`. `UNDO_FAILED` is emitted by `undo` when `git revert` exits with a conflict.
+`BODY_FILE_ERROR` is emitted when `--body-file <path>` on `new` cannot be read. `CONFLICT` is emitted when more than one of `--body` / `--body-file` / `--edit` are used together on `new`, or when `--unattended` and `--attendance attended` are combined on `next`. `UNDO_FAILED` is emitted by `undo` when `git revert` exits with a conflict.
 
 ## JSON output
 

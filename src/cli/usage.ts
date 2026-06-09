@@ -6,7 +6,7 @@ hands off cleanly between them. Readable output and short IDs for people;
 
 Commands:
   new <title> [--effort <low|medium|high>] [--deps <id|uuid>]... [--unattended]
-              [--body -] [--edit] [--json]
+              [--body <text>] [--body-file <path>] [--edit] [--json]
                           Create a new task in backlog.
   show <id|uuid> [--json] [--no-color]
                           Print a task with its dependency edges.

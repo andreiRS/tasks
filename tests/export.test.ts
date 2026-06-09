@@ -84,9 +84,9 @@ test("tasks export --json: single ready task carries frontmatter, body, and pars
     "trailing section that should NOT be in AC",
   ].join("\n");
 
-  // Create task with a body via --body -, then move to ready.
+  // Create task with a body via --body-file -, then move to ready.
   const newProc = Bun.spawn(
-    ["bun", "run", cliPath, "new", "task with body", "--body", "-"],
+    ["bun", "run", cliPath, "new", "task with body", "--body-file", "-"],
     {
       env: { ...process.env, TASKS_HOME: tasksHome },
       stdin: "pipe",

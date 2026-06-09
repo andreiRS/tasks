@@ -19,10 +19,10 @@ afterEach(() => {
 });
 
 /**
- * Create a task with a body piped via `--body -`. Returns the resulting short id.
+ * Create a task with a body piped via `--body-file -`. Returns the resulting short id.
  */
 async function newTaskWithBody(title: string, body: string): Promise<number> {
-  const proc = Bun.spawn(["bun", "run", cliPath, "new", title, "--body", "-"], {
+  const proc = Bun.spawn(["bun", "run", cliPath, "new", title, "--body-file", "-"], {
     env: { ...process.env, TASKS_HOME: tasksHome },
     stdin: "pipe",
     stdout: "pipe",

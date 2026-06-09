@@ -1,7 +1,7 @@
 import { createTask, ensureStore, findAllTasks, findFlockOrFail, isStoreDirty, storeDir, type EditorRunner, type TaskData } from "../store.ts";
 import { emit, failFromError, outputContext } from "../cli/output.ts";
 import { validateEnumOrExit, validateTitle } from "../cli/validation.ts";
-import { collectRepeated } from "../cli/args.ts";
+import { collectRepeated, getFlagValue } from "../cli/args.ts";
 
 const VALID_EFFORT = ["low", "medium", "high"] as const;
 
@@ -18,14 +18,16 @@ export async function run(rest: string[]): Promise<void> {
 
   const depRefs = collectRepeated(rest, "--deps");
 
-  let bodyFromStdin = false;
-  const bodyIdx = rest.indexOf("--body");
-  if (bodyIdx !== -1 && bodyIdx + 1 < rest.length && rest[bodyIdx + 1] === "-") {
-    bodyFromStdin = true;
-  }
+  // Body input mirrors `gh issue create`: `--body <text>` is a literal string,
+  // `--body-file <path>` reads a file (`-` reads stdin), `--edit` opens $EDITOR.
+  const hasBody = rest.includes("--body");
+  const hasBodyFile = rest.includes("--body-file");
+  const bodyValue = getFlagValue(rest, "--body");
+  const bodyFileValue = getFlagValue(rest, "--body-file");
 
-  if (editFlag && bodyFromStdin) {
-    const msg = "--edit and --body - are mutually exclusive; use one or the other";
+  const bodySources = [hasBody, hasBodyFile, editFlag].filter(Boolean).length;
+  if (bodySources > 1) {
+    const msg = "--body, --body-file, and --edit are mutually exclusive; use a single body source";
     emit({ ok: false, code: "CONFLICT", message: msg }, ctx);
   }
 
@@ -35,7 +37,7 @@ export async function run(rest: string[]): Promise<void> {
 
   // Collect the title: first positional arg that isn't a flag or flag value.
   const knownFlags = new Set(["--json", "--unattended", "--edit"]);
-  const flagsWithValues = new Set(["--effort", "--deps", "--body"]);
+  const flagsWithValues = new Set(["--effort", "--deps", "--body", "--body-file"]);
   const titleArgs: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -94,8 +96,20 @@ export async function run(rest: string[]): Promise<void> {
   }
 
   let bodyContent: string | undefined;
-  if (bodyFromStdin) {
-    bodyContent = await new Response(Bun.stdin.stream()).text();
+  if (hasBody) {
+    bodyContent = bodyValue ?? "";
+  } else if (hasBodyFile) {
+    if (bodyFileValue === undefined) {
+      emit({ ok: false, code: "BODY_FILE_ERROR", message: "--body-file requires a path (use - for stdin)" }, ctx);
+    } else if (bodyFileValue === "-") {
+      bodyContent = await new Response(Bun.stdin.stream()).text();
+    } else {
+      try {
+        bodyContent = await Bun.file(bodyFileValue).text();
+      } catch {
+        emit({ ok: false, code: "BODY_FILE_ERROR", message: `cannot read --body-file: ${bodyFileValue}` }, ctx);
+      }
+    }
   }
 
   let editorRunner: EditorRunner | undefined;

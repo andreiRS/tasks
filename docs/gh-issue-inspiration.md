@@ -179,7 +179,7 @@ our model intentionally diverges.
 | Go-template output (`-t`) | none | Missing | TBD |
 | `--search` query on lists | none | Missing | TBD |
 | `--limit` on lists | none (age-window via `--since`/`--all`) | Partial / by-design | TBD |
-| Multiple body inputs | stdin (`--body -`) + `--edit` only | Partial | TBD |
+| Multiple body inputs | `--body <text>` + `--body-file <path>` (`-` = stdin) + `--edit` | Strong | Adopted (#2) |
 | Symmetric add/remove flags | `link`/`unlink` as separate verbs | by-design | TBD |
 
 ### GitHub-domain features (model change, not grammar)

@@ -10,6 +10,19 @@ versions; breaking changes will be called out explicitly here.
 
 ## [Unreleased]
 
+### Added
+
+- `tasks new --body <text>` sets the body to a literal string, and
+  `--body-file <path>` reads the body from a file (`--body-file -` reads
+  stdin). `BODY_FILE_ERROR` is emitted when the file can't be read.
+
+### Changed
+
+- **Breaking:** `tasks new --body -` no longer reads stdin. `--body` is now
+  always a literal string, so `--body -` writes a literal `-`. Read stdin via
+  `--body-file -` instead. The three body sources (`--body`, `--body-file`,
+  `--edit`) are mutually exclusive (`CONFLICT`).
+
 ## [0.1.0] - 2026-05-29
 
 First versioned release. `tasks` is a single-binary CLI for managing
