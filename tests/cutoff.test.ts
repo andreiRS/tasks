@@ -353,6 +353,40 @@ test("tasks board --since 30d shows done tasks within 30 days (--json)", async (
   expect(doneTitles).not.toContain("ancient done task");
 });
 
+// ─── TASKS_NOW pins the clock (deterministic cutoff) ─────────────────────────
+
+const PINNED_DONE = "2026-05-27T10:00:00.000Z";
+
+test("tasks list: TASKS_NOW pins the cutoff clock so a fixed done date stays in-window", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "done", 1, "pinned done task", PINNED_DONE);
+  await gitAdd(storeDir);
+
+  // "now" pinned to the same day -> 0 days old -> within the 7-day window.
+  const { exitCode, stdout } = await runTasks(["list", "--json"], {
+    TASKS_NOW: "2026-05-27T12:00:00.000Z",
+  });
+  expect(exitCode).toBe(0);
+  const titles = (JSON.parse(stdout) as Array<Record<string, unknown>>).map((t) => t.title);
+  expect(titles).toContain("pinned done task");
+});
+
+test("tasks list: TASKS_NOW pins the cutoff clock so an old done date is hidden", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "done", 1, "pinned done task", PINNED_DONE);
+  await gitAdd(storeDir);
+
+  // "now" pinned 30 days later -> outside the 7-day window -> hidden.
+  const { exitCode, stdout } = await runTasks(["list", "--json"], {
+    TASKS_NOW: "2026-06-26T12:00:00.000Z",
+  });
+  expect(exitCode).toBe(0);
+  const titles = (JSON.parse(stdout) as Array<Record<string, unknown>>).map((t) => t.title);
+  expect(titles).not.toContain("pinned done task");
+});
+
 // ─── Invalid --since value: board ────────────────────────────────────────────
 
 test("tasks board --since with invalid value exits non-zero and emits INVALID_SINCE (plain)", async () => {

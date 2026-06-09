@@ -22,6 +22,7 @@ import {
   validateTitle,
   validateGraph,
 } from "./validation.ts";
+import { nowISO } from "./clock.ts";
 import { ensureStore, initStore } from "./store-init.ts";
 import { findFlockOrFail, isStoreDirty, withTransaction } from "./lock.ts";
 import {
@@ -97,7 +98,7 @@ export async function createTask(dir: string, title: string, opts: CreateTaskOpt
 
     const id = nextId;
     const uuid = randomUUID();
-    const now = new Date().toISOString();
+    const now = nowISO();
     const slug = slugify(title);
     const filename = `${id}-${slug}.md`;
     const taskPath = join(dir, "backlog", filename);
@@ -182,7 +183,7 @@ export async function createTask(dir: string, title: string, opts: CreateTaskOpt
         }
 
         // Bump updated_at so timestamps reflect the editor session.
-        const editNow = new Date().toISOString();
+        const editNow = nowISO();
         const bumped = after.replace(/^(updated_at:\s*)(.+)$/m, `$1${editNow}`);
         writeFileSync(taskPath, bumped, "utf-8");
       }

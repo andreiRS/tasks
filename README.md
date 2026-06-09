@@ -52,6 +52,8 @@ bun run src/cli.ts <command> [...args]
 
 Set `$TASKS_HOME` to choose where stores live (defaults to `~/.tasks`, so the on-disk layout is `~/.tasks/projects/<encoded-project-root>/`, mirroring Claude Code's per-project convention under `~/.claude/projects/`). Tests rely on this override for hermetic tempdirs.
 
+Set `$TASKS_NOW` to an ISO-8601 timestamp to freeze the clock the app reads for `created_at`/`updated_at` and the `done` cutoff window; an unparseable value is ignored and the real clock is used. Tests rely on this to make the cutoff deterministic. See [ADR-0015](./docs/adr/0015-injectable-clock-via-tasks-now.md).
+
 ## Frontmatter shape
 
 ```yaml

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { parse as yamlParse, parseDocument, type Document } from "yaml";
 import { git, gitCommit } from "./git.ts";
 import { COLUMNS } from "./constants.ts";
+import { nowISO } from "./clock.ts";
 import type { TaskData } from "./types.ts";
 
 /**
@@ -34,11 +35,6 @@ export function parseTaskFile(content: string): { fm: Record<string, unknown>; b
   // Strip exactly one leading newline
   const body = rawBody.startsWith("\n") ? rawBody.slice(1) : rawBody;
   return { fm, body };
-}
-
-/** Current UTC timestamp in ISO 8601 (the canonical created_at/updated_at form). */
-function nowISO(): string {
-  return new Date().toISOString();
 }
 
 /**

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { COLUMNS, resolveStoreDir } from "../store.ts";
 import { emit, outputContext, type OutputContext } from "../cli/output.ts";
+import { nowISO } from "../clock.ts";
 
 /**
  * `tasks doctor` — read-only store diagnostics, plus `--clean` recovery.
@@ -103,7 +104,7 @@ async function runClean(dir: string, hasStore: boolean, ctx: OutputContext): Pro
     );
   }
 
-  const ts = new Date().toISOString();
+  const ts = nowISO();
   const proc = Bun.spawn(
     ["git", "-C", dir, "stash", "push", "--include-untracked", "--message", `doctor ${ts}`],
     { stdout: "pipe", stderr: "pipe" },

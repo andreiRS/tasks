@@ -125,6 +125,10 @@ _Avoid_: error message, exception, failure object.
 The default 7-day window applied to `done` Tasks in `list` and `board`: Tasks whose `updated_at` is older are hidden unless `--all` or `--since <duration>` is passed.
 _Avoid_: filter, expiry.
 
+**Clock**:
+The single seam (`src/clock.ts`: `nowMs()` / `nowISO()`) through which every "now" is read. Honors the `TASKS_NOW` ISO-8601 environment override and falls back to the real system clock, so the Cutoff window and Timestamps are deterministic under test. See ADR-0015.
+_Avoid_: `Date.now()`, `new Date()` (never read wall-clock time directly).
+
 **Export**:
 The whole-Store JSON dump emitted by `tasks export --json`, intended as a single-call read for agents. Includes every live-Column Task (frontmatter + Body + parsed Acceptance Criteria), the reverse-Dep index, the Store HEAD commit SHA, and the schema version. Archived Tasks are excluded by default; any Archived Task referenced as a Dep by a live Task is included as an Archive Stub. Ordered by Column (fixed order), then by `created_at` ascending. `--include-archived` opts the full Archive in.
 _Avoid_: dump, snapshot, backup.

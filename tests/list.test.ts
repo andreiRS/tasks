@@ -9,6 +9,13 @@ let tasksHome: string;
 let cwdDir: string;
 let cliPath: string;
 
+/**
+ * Pinned wall clock for the CLI-boundary fixtures. Planted tasks are stamped
+ * with this time and TASKS_NOW pins the CLI to it, so the done-window cutoff is
+ * deterministic regardless of the real date.
+ */
+const PINNED_NOW = "2026-05-27T10:00:00.000Z";
+
 beforeEach(() => {
   tasksHome = mkdtempSync(join(tmpdir(), "tasks-list-test-"));
   cwdDir = mkdtempSync(join(tmpdir(), "tasks-list-cwd-"));
@@ -22,7 +29,7 @@ afterEach(() => {
 
 async function runTasks(args: string[], env: Record<string, string> = {}): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn(["bun", "run", cliPath, ...args], {
-    env: { ...process.env, TASKS_HOME: tasksHome, ...env },
+    env: { ...process.env, TASKS_HOME: tasksHome, TASKS_NOW: PINNED_NOW, ...env },
     stdout: "pipe",
     stderr: "pipe",
     cwd: cwdDir,
@@ -276,7 +283,7 @@ function plantTask(storeDir: string, column: string, id: number, title: string):
   mkdirSync(colDir, { recursive: true });
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const filename = `${id}-${slug}.md`;
-  const now = "2026-05-27T10:00:00.000Z";
+  const now = PINNED_NOW;
   const uuid = `${"a".repeat(8)}-${id.toString().padStart(4, "0")}-4000-8000-${"b".repeat(12)}`;
   const content = `---\nid: ${id}\nuuid: ${uuid}\ntitle: ${title}\ncreated_at: ${now}\nupdated_at: ${now}\n---\n`;
   writeFileSync(join(colDir, filename), content, "utf-8");
