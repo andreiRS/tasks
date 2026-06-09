@@ -1,5 +1,6 @@
 import type { TaskData } from "../store.ts";
 import { parseAcceptanceCriteria } from "../acceptance.ts";
+import { nowMs } from "../clock.ts";
 
 /**
  * Decorate a TaskData object with the `acceptance_criteria` field parsed from
@@ -21,7 +22,7 @@ export function applyDoneCutoff(
 ): TaskData[] {
   if (allFlag) return tasks;
   const cutoffMs = sinceDays * 24 * 60 * 60 * 1000;
-  const now = Date.now();
+  const now = nowMs();
   return tasks.filter((t) => {
     if (t.column !== "done") return true;
     const updatedMs = new Date(t.updated_at).getTime();
