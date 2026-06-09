@@ -239,11 +239,53 @@ test("tasks new --deps with bad uuid exits non-zero with UNKNOWN_UUID", async ()
   expect(stderr).toContain("UNKNOWN_UUID");
 });
 
-// ─── --body - ────────────────────────────────────────────────────────────────
+// ─── --body <text> (literal) ──────────────────────────────────────────────────
 
-test("tasks new --body - reads body from stdin", async () => {
+test("tasks new --body <text> writes the literal string as the body", async () => {
+  const bodyContent = "## Acceptance Criteria\n- it works";
+  const { exitCode } = await runTasks(["new", "literal body task", "--body", bodyContent]);
+  expect(exitCode).toBe(0);
+
+  const storeDir = getStoreDir();
+  const files = readdirSync(join(storeDir, "backlog")).filter((f) => f.endsWith(".md"));
+  const body = readTaskBodyByFilename("backlog", files[0]);
+  expect(body).toContain(bodyContent);
+});
+
+test("tasks new --body - writes a literal '-' body (no longer reads stdin)", async () => {
+  // Breaking change vs 0.1.0: stdin moved to --body-file -. A stale pipe is
+  // ignored and the body becomes the literal string "-".
+  const { exitCode } = await runTasks(["new", "dash body task", "--body", "-"], {
+    stdin: "this pipe must be ignored",
+  });
+  expect(exitCode).toBe(0);
+
+  const storeDir = getStoreDir();
+  const files = readdirSync(join(storeDir, "backlog")).filter((f) => f.endsWith(".md"));
+  const body = readTaskBodyByFilename("backlog", files[0]);
+  expect(body.trim()).toBe("-");
+  expect(body).not.toContain("this pipe must be ignored");
+});
+
+// ─── --body-file <path> ───────────────────────────────────────────────────────
+
+test("tasks new --body-file <path> reads the body from a file", async () => {
+  const bodyContent = "## From a file\n- line one\n- line two";
+  const bodyFile = join(editorScriptDir, "body.md");
+  writeFileSync(bodyFile, bodyContent, "utf-8");
+
+  const { exitCode } = await runTasks(["new", "file body task", "--body-file", bodyFile]);
+  expect(exitCode).toBe(0);
+
+  const storeDir = getStoreDir();
+  const files = readdirSync(join(storeDir, "backlog")).filter((f) => f.endsWith(".md"));
+  const body = readTaskBodyByFilename("backlog", files[0]);
+  expect(body).toContain(bodyContent);
+});
+
+test("tasks new --body-file - reads the body from stdin", async () => {
   const bodyContent = "this is the body from stdin";
-  const { exitCode, stdout } = await runTasks(["new", "stdin body task", "--body", "-"], {
+  const { exitCode, stdout } = await runTasks(["new", "stdin body task", "--body-file", "-"], {
     stdin: bodyContent,
   });
   expect(exitCode).toBe(0);
@@ -255,8 +297,8 @@ test("tasks new --body - reads body from stdin", async () => {
   expect(body).toContain(bodyContent);
 });
 
-test("tasks new --body - with empty stdin writes empty body", async () => {
-  const { exitCode } = await runTasks(["new", "empty stdin body task", "--body", "-"], {
+test("tasks new --body-file - with empty stdin writes empty body", async () => {
+  const { exitCode } = await runTasks(["new", "empty stdin body task", "--body-file", "-"], {
     stdin: "",
   });
   expect(exitCode).toBe(0);
@@ -265,6 +307,15 @@ test("tasks new --body - with empty stdin writes empty body", async () => {
   const files = readdirSync(join(storeDir, "backlog")).filter((f) => f.endsWith(".md"));
   const body = readTaskBodyByFilename("backlog", files[0]);
   expect(body.trim()).toBe("");
+});
+
+test("tasks new --body-file <missing> exits non-zero with BODY_FILE_ERROR", async () => {
+  const { exitCode, stderr } = await runTasks([
+    "new", "missing file task",
+    "--body-file", join(editorScriptDir, "does-not-exist.md"),
+  ]);
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("BODY_FILE_ERROR");
 });
 
 // ─── --edit ──────────────────────────────────────────────────────────────────
@@ -361,16 +412,30 @@ sed 's/^title:.*$/title: ""/' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
   expect(stderr).toContain("INVALID_TITLE");
 });
 
-// ─── --edit and --body - mutual exclusion ────────────────────────────────────
+// ─── body-source mutual exclusion ────────────────────────────────────────────
 
-test("tasks new --edit and --body - together exit non-zero with clear error", async () => {
-  const { exitCode, stderr } = await runTasks(["new", "conflict task", "--edit", "--body", "-"], {
-    stdin: "some body",
-    extraEnv: { EDITOR: "true" },
-  });
+test("tasks new --body and --body-file together exit non-zero with CONFLICT", async () => {
+  const { exitCode, stderr } = await runTasks([
+    "new", "conflict task", "--body", "literal", "--body-file", "-",
+  ], { stdin: "some body" });
   expect(exitCode).not.toBe(0);
-  // Should mention some kind of conflict (either CONFLICT or the two flags)
-  expect(stderr.length).toBeGreaterThan(0);
+  expect(stderr).toContain("CONFLICT");
+});
+
+test("tasks new --body and --edit together exit non-zero with CONFLICT", async () => {
+  const { exitCode, stderr } = await runTasks([
+    "new", "conflict task", "--body", "literal", "--edit",
+  ], { extraEnv: { EDITOR: "true" } });
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("CONFLICT");
+});
+
+test("tasks new --body-file and --edit together exit non-zero with CONFLICT", async () => {
+  const { exitCode, stderr } = await runTasks([
+    "new", "conflict task", "--body-file", "-", "--edit",
+  ], { stdin: "some body", extraEnv: { EDITOR: "true" } });
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("CONFLICT");
 });
 
 // ─── combined flags ───────────────────────────────────────────────────────────
