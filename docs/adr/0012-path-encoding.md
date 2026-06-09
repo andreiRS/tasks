@@ -5,4 +5,4 @@ A Project's absolute root path is turned into its Store directory name by doubli
 ## Consequences
 
 - The encoding is the *contract* for Store location, not an imported dependency. If Claude Code changes its internal encoding, this tool stays compatible by spec, not by code coupling.
-- Project root is resolved per invocation by walking up from `pwd` to the nearest `.git/`, falling back to literal `pwd` when none is found. A `.tasks` marker file for explicit pinning is deferred (see `docs/roadmap.md`).
+- Project root is resolved per invocation by walking up from `pwd` to the nearest `.git/`, falling back to literal `pwd` when none is found. A `.tasks` marker file for explicit pinning is deferred.

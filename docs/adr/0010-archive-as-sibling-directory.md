@@ -1,6 +1,6 @@
 # Archive is a sibling directory, not a 7th Column
 
-Long-lived `done/` accumulates and clutters the live store, but the six Columns are fixed by ADR-0003 ("status encoded by directory") and configurable column sets are an explicit non-goal (see `docs/roadmap.md`). We add an `archive/` directory inside the Store that sits next to the six Column directories but is **not** a Column: Transitions never target it, `list`/`board`/`next` skip it by default, and the only way in is the dedicated `tasks archive` command. The Column vocabulary stays at six; "archived" becomes a separate concept (a tombstone location for tasks the user is done thinking about), preserving ADR-0003's invariant that a Task's Column equals its enclosing directory among the six.
+Long-lived `done/` accumulates and clutters the live store, but the six Columns are fixed by ADR-0003 ("status encoded by directory") and configurable column sets are an explicit non-goal. We add an `archive/` directory inside the Store that sits next to the six Column directories but is **not** a Column: Transitions never target it, `list`/`board`/`next` skip it by default, and the only way in is the dedicated `tasks archive` command. The Column vocabulary stays at six; "archived" becomes a separate concept (a tombstone location for tasks the user is done thinking about), preserving ADR-0003's invariant that a Task's Column equals its enclosing directory among the six.
 
 ## Consequences
 
