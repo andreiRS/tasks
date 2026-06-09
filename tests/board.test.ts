@@ -8,6 +8,13 @@ let tasksHome: string;
 let cwdDir: string;
 let cliPath: string;
 
+/**
+ * Pinned wall clock for these fixtures. Planted tasks are stamped with this
+ * exact time, and the CLI's TASKS_NOW is pinned to it too, so the done-window
+ * cutoff math is deterministic regardless of the real date.
+ */
+const PINNED_NOW = "2026-05-27T10:00:00.000Z";
+
 beforeEach(() => {
   tasksHome = mkdtempSync(join(tmpdir(), "tasks-board-test-"));
   cwdDir = mkdtempSync(join(tmpdir(), "tasks-board-cwd-"));
@@ -21,7 +28,7 @@ afterEach(() => {
 
 async function runTasks(args: string[], env: Record<string, string> = {}): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn(["bun", "run", cliPath, ...args], {
-    env: { ...process.env, TASKS_HOME: tasksHome, ...env },
+    env: { ...process.env, TASKS_HOME: tasksHome, TASKS_NOW: PINNED_NOW, ...env },
     stdout: "pipe",
     stderr: "pipe",
     cwd: cwdDir,
@@ -53,7 +60,7 @@ function plantTask(storeDir: string, column: string, id: number, title: string, 
   mkdirSync(colDir, { recursive: true });
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const filename = `${id}-${slug}.md`;
-  const now = "2026-05-27T10:00:00.000Z";
+  const now = PINNED_NOW;
   const uuid = depUuid(id);
   const deps = opts.deps ?? [];
   const depsYaml = deps.length === 0 ? "[]" : `[${deps.map((d) => `"${depUuid(d)}"`).join(", ")}]`;
