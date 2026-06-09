@@ -9,6 +9,7 @@ import {
 import { emit, outputContext } from "../cli/output.ts";
 import { getFlagValue } from "../cli/args.ts";
 import { parseSinceDays } from "../cli/validation.ts";
+import { nowMs } from "../clock.ts";
 
 const SCHEMA_VERSION = "1";
 const DEFAULT_RECENT = 10;
@@ -135,7 +136,7 @@ export async function run(rest: string[]): Promise<void> {
 
   // Build stale: live tasks in doing/blocked/review whose updated_at is
   // older than staleDays from now, sorted by updated_at ascending (oldest first).
-  const now = Date.now();
+  const now = nowMs();
   const staleThresholdMs = staleDays * 24 * 60 * 60 * 1000;
   const stale = liveTasks
     .filter((t) => {

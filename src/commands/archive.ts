@@ -3,6 +3,7 @@ import { emit, failFromError, outputContext } from "../cli/output.ts";
 import { mutatingPreamble } from "../cli/preflight.ts";
 import { parseSinceDays } from "../cli/validation.ts";
 import { getFlagValue } from "../cli/args.ts";
+import { nowMs } from "../clock.ts";
 
 export async function run(rest: string[]): Promise<void> {
   const ctx = outputContext(rest);
@@ -21,7 +22,7 @@ export async function run(rest: string[]): Promise<void> {
       const msg = `invalid --before value: ${beforeVal}. Expected format: <N>d (e.g. 7d, 30d)`;
       emit({ ok: false, code: "INVALID_SINCE", message: msg, details: { value: beforeVal } }, ctx);
     }
-    before = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    before = new Date(nowMs() - days * 24 * 60 * 60 * 1000);
   }
 
   const idOrUuid = positional[0];
