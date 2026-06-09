@@ -438,6 +438,32 @@ test("tasks new --body-file and --edit together exit non-zero with CONFLICT", as
   expect(stderr).toContain("CONFLICT");
 });
 
+// ─── --title alias ─────────────────────────────────────────────────────────────
+
+// AC1: --title is equivalent to the positional form.
+test("tasks new --title <title> creates a task with that title", async () => {
+  const { exitCode, stdout } = await runTasks(["new", "--title", "do the thing"]);
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain("do the thing");
+
+  const fm = readSingleTaskFm("backlog");
+  expect(fm.title).toBe("do the thing");
+});
+
+// AC3: positional title AND --title together is a CONFLICT.
+test("tasks new with positional title and --title together exit non-zero with CONFLICT", async () => {
+  const { exitCode, stderr } = await runTasks(["new", "positional", "--title", "flagged"]);
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("CONFLICT");
+});
+
+// AC5: --title with a whitespace value validates the same as positional (INVALID_TITLE).
+test("tasks new --title with a whitespace value exits non-zero with INVALID_TITLE", async () => {
+  const { exitCode, stderr } = await runTasks(["new", "--title", "   "]);
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("INVALID_TITLE");
+});
+
 // ─── combined flags ───────────────────────────────────────────────────────────
 
 test("tasks new --unattended --effort low --deps writes all three to disk", async () => {

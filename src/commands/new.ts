@@ -31,13 +31,16 @@ export async function run(rest: string[]): Promise<void> {
     emit({ ok: false, code: "CONFLICT", message: msg }, ctx);
   }
 
+  const hasTitleFlag = rest.includes("--title");
+  const titleFlagValue = getFlagValue(rest, "--title");
+
   if (effortValue !== undefined) {
     validateEnumOrExit("--effort", effortValue, VALID_EFFORT, ctx, "INVALID_EFFORT");
   }
 
   // Collect the title: first positional arg that isn't a flag or flag value.
   const knownFlags = new Set(["--json", "--unattended", "--edit"]);
-  const flagsWithValues = new Set(["--effort", "--deps", "--body", "--body-file"]);
+  const flagsWithValues = new Set(["--effort", "--deps", "--body", "--body-file", "--title"]);
   const titleArgs: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -49,7 +52,16 @@ export async function run(rest: string[]): Promise<void> {
     if (a.startsWith("--")) continue;
     titleArgs.push(a);
   }
-  const title = titleArgs[0] ?? "";
+  const positionalTitle = titleArgs[0];
+
+  // `--title` is a compatibility alias for the positional form. Supplying both
+  // is ambiguous, so reject it (mirrors the body-source mutual exclusion above).
+  if (positionalTitle !== undefined && hasTitleFlag) {
+    const msg = "positional title and --title are mutually exclusive; provide the title once";
+    emit({ ok: false, code: "CONFLICT", message: msg }, ctx);
+  }
+
+  const title = positionalTitle ?? titleFlagValue ?? "";
 
   const titleError = validateTitle(title);
   if (titleError !== null) {
