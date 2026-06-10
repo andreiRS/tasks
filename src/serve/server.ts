@@ -9,7 +9,6 @@ import {
   setTask,
   TasksError,
   validateTitle,
-  ATTENDANCE_VALUES,
 } from "../store.ts";
 import { computeBlockedBy } from "../render.ts";
 import { buildBoardSnapshot, type BoardSnapshot } from "./snapshot.ts";
@@ -266,21 +265,13 @@ async function handleEdit(dir: string, id: string, req: Request): Promise<Respon
       opts.body = parsed.body;
     }
     if (parsed.effort !== undefined) {
-      if (typeof parsed.effort !== "string" || !(EFFORT_VALUES as readonly string[]).includes(parsed.effort)) {
-        throw new TasksError("INVALID_EFFORT", `invalid effort value: ${String(parsed.effort)}. Allowed: ${EFFORT_VALUES.join(", ")}`, {
-          value: parsed.effort,
-          allowed: [...EFFORT_VALUES],
-        });
-      }
+      // Enum membership (and non-string shape) is enforced by the core setTask,
+      // which throws INVALID_EFFORT with the same {value, allowed} details.
       opts.effort = parsed.effort as "low" | "medium" | "high";
     }
     if (parsed.attendance !== undefined) {
-      if (typeof parsed.attendance !== "string" || !(ATTENDANCE_VALUES as readonly string[]).includes(parsed.attendance)) {
-        throw new TasksError("INVALID_ATTENDANCE", `invalid attendance value: ${String(parsed.attendance)}. Allowed: ${ATTENDANCE_VALUES.join(", ")}`, {
-          value: parsed.attendance,
-          allowed: [...ATTENDANCE_VALUES],
-        });
-      }
+      // Enum membership (and non-string shape) is enforced by the core setTask,
+      // which throws INVALID_ATTENDANCE with the same {value, allowed} details.
       opts.attendance = parsed.attendance as "attended" | "unattended";
     }
 

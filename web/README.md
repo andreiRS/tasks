@@ -47,6 +47,12 @@ fronts the UI. The asset-serving seam (`src/serve/assets.ts`) returns `null`, so
 non-`/api` routes on the backend 404 — that's expected, you talk to Vite (5173),
 not the backend (4317).
 
+**Known dev-only quirk — SSE stalls after a write.** Through the Vite dev proxy
+(`bun run dev`), live SSE updates can stall after a write: the proxy doesn't
+reliably stream `text/event-stream` concurrently with a POST. A hard refresh
+recovers the stream. This is purely a dev-proxy artifact — the compiled
+single-origin production binary (`tasks serve`) is unaffected.
+
 ## Production build (single binary)
 
 ```sh
