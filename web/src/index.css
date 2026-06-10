@@ -58,9 +58,9 @@ body,
    external move changes a card's lane). Each card carries a per-uuid
    `view-transition-name`, so the browser morphs it from its old slot to the new
    one; cards below the vacated/filled slot slide as their positions shift. A
-   gentle ease-out over ~480ms reads as "placed", not flung. */
+   gentle ease-out over ~900ms reads as "placed", not flung. */
 ::view-transition-group(*) {
-  animation-duration: 480ms;
+  animation-duration: 900ms;
   animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
