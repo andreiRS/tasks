@@ -81,6 +81,17 @@ async function commitStore(storeDir: string): Promise<void> {
   await git(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "seed tasks"]);
 }
 
+/** Count commits on HEAD in the store (to assert "exactly one new commit"). */
+async function countCommits(storeDir: string): Promise<number> {
+  const proc = Bun.spawn(["git", "rev-list", "--count", "HEAD"], {
+    cwd: storeDir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  return parseInt(out.trim(), 10);
+}
+
 /** Derive the store path from tasksHome + encoded cwd. */
 function deriveStorePath(tasksHome: string, cwd: string): string {
   const realCwd = realpathSync(cwd);
@@ -376,6 +387,120 @@ test("server binds to 127.0.0.1 and is reachable there", async () => {
     expect(srv.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     const res = await fetch(`${srv.baseUrl}/api/board`);
     expect(res.status).toBe(200);
+  } finally {
+    srv.stop();
+  }
+});
+
+// ─── Behavior 8: POST /api/tasks/:id/move performs a Transition ──────────────
+
+test("POST /api/tasks/:id/move relocates the task in exactly one commit; survives /api/board re-read", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task");
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const srv = await startServe();
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/tasks/1/move`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ column: "doing" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; id: number; from: string; to: string };
+    expect(body.ok).toBe(true);
+    expect(body.id).toBe(1);
+    expect(body.from).toBe("backlog");
+    expect(body.to).toBe("doing");
+
+    // Exactly one new commit (same as `tasks mv`).
+    expect(await countCommits(storeDir)).toBe(before + 1);
+
+    // Survives a re-read of the board: task #1 is now in `doing`, gone from backlog.
+    const boardRes = await fetch(`${srv.baseUrl}/api/board`);
+    const board = (await boardRes.json()) as { lanes: Record<string, Array<{ id: number }>> };
+    expect(board.lanes.doing.map((t) => t.id)).toContain(1);
+    expect(board.lanes.backlog.map((t) => t.id)).not.toContain(1);
+  } finally {
+    srv.stop();
+  }
+});
+
+test("POST /api/tasks/:id/move with an unknown id returns NOT_FOUND + non-2xx, no commit", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task");
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const srv = await startServe();
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/tasks/999/move`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ column: "doing" }),
+    });
+    expect(res.status).toBe(statusForCode("NOT_FOUND"));
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe("NOT_FOUND");
+    expect(await countCommits(storeDir)).toBe(before);
+  } finally {
+    srv.stop();
+  }
+});
+
+test("POST /api/tasks/:id/move with an invalid column returns INVALID_COLUMN + non-2xx, no commit", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task");
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const srv = await startServe();
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/tasks/1/move`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ column: "nonsense" }),
+    });
+    expect(res.status).toBe(statusForCode("INVALID_COLUMN"));
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe("INVALID_COLUMN");
+    expect(await countCommits(storeDir)).toBe(before);
+  } finally {
+    srv.stop();
+  }
+});
+
+test("POST /api/tasks/:id/move into doing succeeds even with an unresolved blocker (open transitions)", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  // #2 depends on #1; #1 is still in backlog, so #2 is blocked.
+  plantTask(storeDir, "backlog", 1, "blocker");
+  plantTask(storeDir, "backlog", 2, "blocked task", { deps: [1] });
+  await commitStore(storeDir);
+
+  const srv = await startServe();
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/tasks/2/move`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ column: "doing" }),
+    });
+    expect(res.status).toBe(200);
+
+    const boardRes = await fetch(`${srv.baseUrl}/api/board`);
+    const board = (await boardRes.json()) as {
+      lanes: Record<string, Array<{ id: number; blockedBy: unknown[] }>>;
+    };
+    const moved = board.lanes.doing.find((t) => t.id === 2);
+    expect(moved).toBeDefined();
+    // Still reported as blocked: the transition did not require resolution.
+    expect(moved!.blockedBy.length).toBeGreaterThan(0);
   } finally {
     srv.stop();
   }
