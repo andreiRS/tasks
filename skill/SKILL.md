@@ -75,7 +75,9 @@ Two things to know about `serve`:
   URL shows a short page that says exactly that, and the JSON API under `/api`
   still works. If the user reports a JSON error or a "UI not built" page, tell
   them to run `bun run build:web` (or use the compiled binary via
-  `bun run build:binary`), then refresh.
+  `bun run build:binary`), then **restart `serve`**. `serve` snapshots the built
+  assets into memory once at boot, so a rebuild has no effect on a running board
+  until you stop and restart it — a browser refresh alone won't pick it up.
 - **`EADDRINUSE` is good news, not an error.** It means a board is already running
   on that port — just point the user at the existing URL. Use `--port 0` (or
   another port) only if you truly need a second one.
