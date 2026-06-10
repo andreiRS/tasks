@@ -92,6 +92,22 @@ export interface PendingEdit {
   issuedHead: BoardHead | null;
 }
 
+/** One in-flight optimistic archive, keyed by task uuid. Archive removes the
+ *  card from the board entirely (archived tasks aren't in any lane), so unlike
+ *  a move there's no target lane to track and no "saving…" look — the card just
+ *  disappears. We keep the removed card + its source column so a failed archive
+ *  can snap it back, and the head it was issued against so a post-dating
+ *  snapshot reconciles it. */
+export interface PendingArchive {
+  uuid: string;
+  /** The card as it was before removal, for snap-back on failure. */
+  prevCard: BoardTask;
+  /** The lane the card was archived from (always `done`), for snap-back. */
+  fromColumn: string;
+  /** Head the archive was issued against; a snapshot post-dating it reconciles. */
+  issuedHead: BoardHead | null;
+}
+
 /** Minimal toast slice for #19. #23 generalizes the write-failure UX. */
 export interface Toast {
   code: string;
@@ -108,6 +124,8 @@ interface BoardState {
   pendingCreates: Record<string, PendingCreate>;
   /** Pending edits keyed by task uuid. */
   pendingEdits: Record<string, PendingEdit>;
+  /** Pending archives keyed by task uuid. */
+  pendingArchives: Record<string, PendingArchive>;
   /** uuid of the card whose drawer is open, or null when closed (#22). The
    *  drawer reads the LIVE card from `board` by this uuid each render, so
    *  reconciled SSE updates flow through and a confirmed edit shows its values. */
@@ -144,6 +162,10 @@ interface BoardState {
   /** Optimistically edit a task's title/body/effort/attendance, PATCH the
    *  changed fields, then let the SSE snapshot reconcile (mirrors move/create). */
   editTask: (task: BoardTask, patch: EditableFields) => Promise<void>;
+  /** Optimistically archive a done task (remove it from the board), POST
+   *  /api/tasks/:id/archive, then let the SSE snapshot reconcile (snap back on
+   *  failure). Only done-column cards are archivable. */
+  archiveTask: (task: BoardTask) => Promise<void>;
   /** Open the detail drawer for `uuid` (#22). */
   openCard: (uuid: string) => void;
   /** Close the detail drawer (#22). */
@@ -276,6 +298,17 @@ function everyTask(b: Board): BoardTask[] {
   return b.columns.flatMap((c) => b.lanes[c] ?? []);
 }
 
+/** Drop the card with `uuid` from every lane (optimistic archive removal, and
+ *  the re-overlay that keeps a still-pending archive's card hidden when an
+ *  unrelated pre-commit snapshot would otherwise resurface it). */
+function removeCard(board: Board, uuid: string): Board {
+  const lanes: Record<string, BoardTask[]> = {};
+  for (const col of board.columns) {
+    lanes[col] = (board.lanes[col] ?? []).filter((t) => t.uuid !== uuid);
+  }
+  return { ...board, lanes };
+}
+
 /** Carries the server error envelope's `code` to the catch handler. ONE class
  *  for all three write paths (#23): move/create/edit all throw it and the shared
  *  failure helper reads `.code` off it (falling back to TRANSPORT_ERROR). */
@@ -377,6 +410,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   pending: {},
   pendingCreates: {},
   pendingEdits: {},
+  pendingArchives: {},
   selectedUuid: null,
   toast: null,
   appliedHead: null,
@@ -587,6 +621,24 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       clearDelayTimer(p.uuid);
     }
 
+    // (6d) Reconcile pending archives. An archive is resolved by any snapshot
+    // whose head post-dates the head it was issued against (sha inequality, as
+    // above): a post-dating commit is the archive landing, after which the card
+    // is gone from every lane. Drop the pending archive — if the card is somehow
+    // still present (superseded, e.g. someone moved it back), the snapshot wins
+    // and shows it. While no post-dating frame has arrived we keep the pending
+    // archive so its card stays hidden below.
+    const { pendingArchives } = get();
+    const nextPendingArchives: Record<string, PendingArchive> = {};
+    for (const p of Object.values(pendingArchives)) {
+      const postDates =
+        board.head != null &&
+        (p.issuedHead == null || board.head.sha !== p.issuedHead.sha);
+      if (!postDates) {
+        nextPendingArchives[p.uuid] = p;
+      }
+    }
+
     // Re-overlay still-pending create placeholders onto the replaced board.
     // Unlike a move (whose card already exists in the snapshot, just in another
     // lane), a create's card does NOT exist in any snapshot until its commit, so
@@ -608,6 +660,15 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     for (const p of Object.values(nextPendingEdits)) {
       nextBoard = applyOptimisticEdit(nextBoard, p.uuid, p.patch);
     }
+    // Re-overlay still-pending archives by removing their card from the replaced
+    // board: an unrelated pre-commit frame still lists the task in `done`, so
+    // without this the card would flicker back between the optimistic removal
+    // and the archive's own confirming commit. The confirming (post-dating)
+    // frame dropped the archive from nextPendingArchives above, so this never
+    // hides a card the snapshot authoritatively keeps.
+    for (const p of Object.values(nextPendingArchives)) {
+      nextBoard = removeCard(nextBoard, p.uuid);
+    }
 
     // If the open drawer's card is gone from the (reconciled) board, close it —
     // a placeholder uuid still in pendingCreates keeps the drawer eligible.
@@ -625,6 +686,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         pending: nextPending,
         pendingCreates: nextPendingCreates,
         pendingEdits: nextPendingEdits,
+        pendingArchives: nextPendingArchives,
         selectedUuid: s.selectedUuid != null && selectedStillPresent ? s.selectedUuid : null,
         status: "ready",
         error: null,
@@ -921,6 +983,77 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           return stillOptimistic
             ? applyOptimisticEdit(current, task.uuid, prevFields)
             : current;
+        },
+      });
+    }
+  },
+
+  archiveTask: async (task) => {
+    const board = get().board;
+    if (!board) return;
+    // Only done cards are archivable (the button only renders there; the server
+    // enforces it too with INVALID_COLUMN).
+    if (task.column !== "done") return;
+    // One in-flight write per card: a pending move/edit/archive on this uuid
+    // would double-write. Ignore until it resolves (mirrors move()/editTask()).
+    if (get().pending[task.uuid] || get().pendingEdits[task.uuid] || get().pendingArchives[task.uuid]) {
+      return;
+    }
+
+    // The live card as the board holds it, for snap-back on failure.
+    const prevCard = everyTask(board).find((t) => t.uuid === task.uuid);
+    if (!prevCard) return;
+    const fromColumn = task.column;
+    // Head the write is issued against; only a post-dating snapshot reconciles.
+    const issuedHead = board.head;
+
+    // 1. Optimistic apply — the card leaves the board immediately.
+    set({ board: removeCard(board, task.uuid) });
+
+    // 2. Track the pending archive (no delay-gate timer: there's no card left to
+    //    show a "saving…" look on).
+    set((s) => ({
+      pendingArchives: {
+        ...s.pendingArchives,
+        [task.uuid]: { uuid: task.uuid, prevCard, fromColumn, issuedHead },
+      },
+    }));
+
+    // 3. Persist. On success we do NOT refetch: the commit's SSE frame
+    //    post-dates this write and reconciles it (drops the pending archive),
+    //    same as move()/editTask().
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/archive`, { method: "POST" });
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => null)) as
+          | { error?: { code?: string; message?: string } }
+          | null;
+        const code = errBody?.error?.code ?? `HTTP_${res.status}`;
+        const message = errBody?.error?.message ?? `archive failed (${res.status})`;
+        throw new WriteError(code, message);
+      }
+      // Success: leave the pending overlay in place; the SSE frame clears it.
+    } catch (err) {
+      // 4. Failure — put the card back in its source lane, clear pending, toast.
+      //    Only snap back if the card is still absent: a newer authoritative
+      //    snapshot that already re-listed it has won (mirrors move()'s caution).
+      handleWriteFailure(set, {
+        key: task.uuid,
+        err,
+        drop: (s) => {
+          const { [task.uuid]: _dropped, ...rest } = s.pendingArchives;
+          return { pendingArchives: rest };
+        },
+        revert: (current) => {
+          const present = everyTask(current).some((t) => t.uuid === task.uuid);
+          if (present) return current;
+          return {
+            ...current,
+            lanes: {
+              ...current.lanes,
+              [fromColumn]: [...(current.lanes[fromColumn] ?? []), prevCard],
+            },
+          };
         },
       });
     }
