@@ -76,19 +76,6 @@ export function App() {
                 + new task
               </button>
             )}
-            {/* Subtle, non-destructive hint: an established stream dropped and is
-                reconnecting. The last board stays visible (we don't flip to the
-                hard error screen); an initial-connect failure uses the error UI
-                below instead. */}
-            {status === "ready" && connection === "reconnecting" && (
-              <span
-                role="status"
-                className="flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs text-amber-700"
-              >
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-                live connection lost — reconnecting…
-              </span>
-            )}
             {board?.head && (
               <span className="text-xs text-slate-400">
                 board {timeAgo(board.head.committed_at)}
@@ -96,6 +83,21 @@ export function App() {
             )}
           </div>
         </header>
+
+        {/* Subtle, non-destructive hint: an established stream dropped and is
+            reconnecting. Floated top-center (fixed, out of header flow) so it
+            never shifts the header layout — e.g. the "+ new task" button. The
+            last board stays visible (we don't flip to the hard error screen);
+            an initial-connect failure uses the error UI below instead. */}
+        {status === "ready" && connection === "reconnecting" && (
+          <span
+            role="status"
+            className="fixed left-1/2 top-3 z-50 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs text-amber-700 shadow-md ring-1 ring-amber-200/70"
+          >
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+            live connection lost — reconnecting…
+          </span>
+        )}
 
         {status === "loading" && (
           <p className="px-6 pt-6 text-sm text-slate-400">loading board…</p>
