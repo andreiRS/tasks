@@ -28,7 +28,9 @@ export function startBoardServer(opts: ServeOptions): ReturnType<typeof Bun.serv
       if (req.method === "GET" && url.pathname === "/api/board") {
         return handleBoard(dir);
       }
-      return jsonResponse({ error: { code: "NOT_FOUND", message: "no such route", details: {} } }, 404);
+      // Route the 404 through the single envelope path (errorResponse) so there
+      // is exactly one place that builds the error shape + picks the status.
+      return errorResponse(new TasksError("NOT_FOUND", "no such route", { path: url.pathname }));
     },
   });
 

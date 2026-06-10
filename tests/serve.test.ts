@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COLUMNS } from "../src/store.ts";
+import { statusForCode } from "../src/serve/server.ts";
 
 let tasksHome: string;
 let cwdDir: string;
@@ -326,6 +327,41 @@ test("a core error surfaces as HTTP non-2xx with the standard envelope; server s
   } finally {
     srv.stop();
   }
+});
+
+// ─── Behavior 6b: statusForCode is the published error-status contract ───────
+
+test("statusForCode maps every documented TasksError code to its HTTP status", () => {
+  // 404 — addressing a thing that is not there.
+  expect(statusForCode("NOT_FOUND")).toBe(404);
+  expect(statusForCode("NOT_INITIALIZED")).toBe(404);
+  expect(statusForCode("UNKNOWN_UUID")).toBe(404);
+  // 409 — store/state conflict.
+  expect(statusForCode("STORE_DIRTY")).toBe(409);
+  // 400 — bad input.
+  expect(statusForCode("INVALID_TITLE")).toBe(400);
+  expect(statusForCode("INVALID_ATTENDANCE")).toBe(400);
+  expect(statusForCode("INVALID_EFFORT")).toBe(400);
+  expect(statusForCode("INVALID_COLUMN")).toBe(400);
+  expect(statusForCode("INVALID_SINCE")).toBe(400);
+  // 503 — environment can't satisfy the request right now.
+  expect(statusForCode("FLOCK_MISSING")).toBe(503);
+  // unknown / unmapped code -> generic 500.
+  expect(statusForCode("SOMETHING_ELSE")).toBe(500);
+});
+
+// ─── Behavior 6c: --port is validated, never silently random ─────────────────
+
+test("tasks serve --port abc fails fast on stderr and does not start a server", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  await commitStore(storeDir);
+
+  const { exitCode, stdout, stderr } = await runTasks(["serve", "--port", "abc"]);
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("--port");
+  // It must NOT have started a server (no listening-URL announcement).
+  expect(stdout).not.toMatch(/https?:\/\/127\.0\.0\.1:\d+/);
 });
 
 // ─── Behavior 7: binds to 127.0.0.1 only ─────────────────────────────────────

@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { COLUMNS, type TaskData } from "../store.ts";
 import { gitCaptureSync } from "./git-head.ts";
 
@@ -73,9 +72,13 @@ export function buildBoardSnapshot(
   return { columns: [...COLUMNS], lanes, head: readHead(dir) };
 }
 
-/** Read the Store's HEAD sha + commit time, or null if unavailable. */
+/**
+ * Read the Store's HEAD sha + commit time, or null if unavailable. No
+ * existence check: the boot path (commands/serve.ts) already refused to start
+ * without a `.git` store, and `gitCaptureSync` returns null on any git failure
+ * (including a missing dir), so a redundant `existsSync` would be dead code.
+ */
 function readHead(dir: string): BoardHead | null {
-  if (!existsSync(dir)) return null;
   const out = gitCaptureSync(dir, ["log", "-1", "--format=%H%n%cI"]);
   if (out === null) return null;
   const [sha, committed_at] = out.split("\n");

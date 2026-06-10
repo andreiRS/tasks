@@ -22,7 +22,20 @@ export async function run(rest: string[]): Promise<void> {
   }
 
   const portArg = getFlagValue(rest, "--port");
-  const port = portArg !== undefined ? Number(portArg) : 4317;
+  let port = 4317;
+  if (portArg !== undefined) {
+    // Guard against `Number("abc") === NaN`, negatives, and out-of-range values:
+    // Bun.serve would otherwise silently bind a random ephemeral port. Port 0 is
+    // valid and means "let the OS pick" (used by the test harness).
+    const parsed = Number(portArg);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+      process.stderr.write(
+        `tasks: INVALID_PORT: --port must be an integer 0-65535; got '${portArg}'\n`,
+      );
+      process.exit(1);
+    }
+    port = parsed;
+  }
 
   const { startBoardServer } = await import("../serve/server.ts");
   startBoardServer({ dir, port });
