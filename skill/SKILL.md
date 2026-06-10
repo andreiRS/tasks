@@ -5,9 +5,10 @@ description: >-
   for human + agent task management). Reach for this whenever you take on a job
   with three or more steps or any ordering between steps — a feature with
   impl-then-tests, a refactor touching several files, a migration, a bug hunt
-  with a fix that depends on a repro. Create one task per slice, wire up the
-  dependencies, and move tasks across columns as you go, so the work survives a
-  dropped session and the user can watch it live on a board. Also use it when the
+  with a fix that depends on a repro. Create the card for a slice before you start
+  it (not after), wire up the dependencies, and move tasks across columns as you
+  go, so the work survives a dropped session and the user can watch it live on a
+  board. Also use it when the
   user talks to the board directly: "add a task", "what's blocking X", "show me
   the board", "what should I pick up next". Do NOT spin it up for a single
   one-shot edit — the bookkeeping isn't worth it there.
@@ -83,6 +84,14 @@ Two things to know about `serve`:
   another port) only if you truly need a second one.
 
 ### The loop
+
+**Card first, then work.** The moment you know what the next slice is, create its
+card and move it to `doing` *before* you make the first edit or run the first
+command for it — not after, not at the end of the job. The board exists to mirror
+what you're doing *right now*; if you code first and log later, it can't, and a
+session that dies mid-slice loses the work with no trace. If you catch yourself
+editing with nothing in `doing`, stop and create the card before the next change.
+The cost is one command; the payoff is a board that's always true.
 
 Think of each task as a slice of the job. A good slice is something you'd want to
 see as a single line on a board: "Add rate-limit middleware", not "type a
