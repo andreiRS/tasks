@@ -55,7 +55,13 @@ export function Card({ task }: { task: BoardTask }) {
       onClick={() => {
         if (!isPlaceholder) openCard(task.uuid);
       }}
-      className={`relative touch-none rounded-[3px] px-3.5 pt-3 pb-2.5 text-slate-800 shadow-[2px_3px_6px_rgba(0,0,0,0.18)] transition-transform duration-150 hover:-translate-y-0.5 hover:rotate-0 ${
+      // No transition on the card being dragged: dnd-kit rewrites `transform`
+      // on every pointermove, and a transition-transform would animate each of
+      // those over 150ms, so the card chases the pointer a frame behind (laggy
+      // drag). Keep the transition only at rest for the hover lift.
+      className={`relative touch-none rounded-[3px] px-3.5 pt-3 pb-2.5 text-slate-800 shadow-[2px_3px_6px_rgba(0,0,0,0.18)] hover:-translate-y-0.5 hover:rotate-0 ${
+        isDragging ? "" : "transition-transform duration-150"
+      } ${
         isPlaceholder ? "cursor-default" : "cursor-grab active:cursor-grabbing"
       }`}
       style={{
