@@ -52,5 +52,6 @@ Global flags:
   -h, --help              Show this message.
   -V, --version           Print the CLI version.
 
-Store location: \$TASKS_HOME/projects/<encoded-cwd>/ (default \$HOME/.tasks).
+Store location: \$TASKS_HOME/projects/<encoded-repo-root>/ (repo root = nearest .git
+ancestor of cwd, else cwd; default \$HOME/.tasks).
 `;

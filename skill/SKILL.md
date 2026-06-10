@@ -38,6 +38,12 @@ error message and code tell you what to fix — read it before guessing.
 If the `tasks` binary isn't on `PATH`, it's the project in this repo: run it with
 `bun run src/cli.ts ...` from the tasks checkout instead of `tasks ...`.
 
+Run every `tasks` command from inside the repo you're tracking. The store is keyed
+by the **nearest `.git` ancestor of your cwd** (not the raw cwd), so any directory
+within that repo is fine, but if you `cd` *out* of it (say into `/tmp` to run a
+scratch test) the CLI silently falls back to a different store and your board looks
+empty. If a read comes back unexpectedly empty, check where you are first.
+
 ## Primary: track your own work
 
 ### When to start
