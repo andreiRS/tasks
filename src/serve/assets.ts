@@ -111,7 +111,15 @@ async function loadFromDir(distDir: string): Promise<AssetBundle> {
   for (const rel of walkFiles(distDir)) {
     // Normalise Windows separators just in case; request paths use "/".
     const route = "/" + rel.split(sep).join("/");
-    assets.set(route, Bun.file(join(distDir, rel)));
+    // Read the bytes into memory NOW, not a lazy Bun.file handle. A lazy handle
+    // re-reads at request time, so a `build:web` that replaces the hashed files
+    // while serve is running turns every asset request into a 500 — the cached
+    // index.html still points at the now-deleted hashes, so the live board goes
+    // white. An eager byte snapshot keeps the running board self-consistent: a
+    // rebuild has no effect until restart (as documented), but can't break the
+    // board mid-flight.
+    const bytes = await Bun.file(join(distDir, rel)).arrayBuffer();
+    assets.set(route, new Blob([bytes]));
   }
   return { indexHtml, assets };
 }
