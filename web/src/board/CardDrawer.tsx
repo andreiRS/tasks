@@ -220,7 +220,7 @@ function DrawerBody({
           {/* Effort picker */}
           <fieldset className="flex flex-col gap-1">
             <legend className="text-xs font-semibold uppercase tracking-wide text-slate-500">effort</legend>
-            <div className="mt-1 flex gap-2">
+            <div className="mt-1 inline-flex gap-1 self-start rounded-lg bg-slate-100 p-1">
               {EFFORTS.map((e) => {
                 const selected = effort === e;
                 return (
@@ -229,10 +229,10 @@ function DrawerBody({
                     type="button"
                     onClick={() => setEffort(e)}
                     aria-pressed={selected}
-                    className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm capitalize transition-colors ${
+                    className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm capitalize transition-colors ${
                       selected
-                        ? "border-slate-400 bg-white font-semibold text-slate-800"
-                        : "border-slate-200 bg-transparent text-slate-500 hover:border-slate-300"
+                        ? "bg-white font-semibold text-slate-800 shadow-sm"
+                        : "text-slate-500 hover:text-slate-700"
                     }`}
                   >
                     <EffortBadge effort={e} />
@@ -249,7 +249,7 @@ function DrawerBody({
             <legend className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               attendance
             </legend>
-            <div className="mt-1 flex gap-2">
+            <div className="mt-1 inline-flex gap-1 self-start rounded-lg bg-slate-100 p-1">
               {(["attended", "unattended"] as Attendance[]).map((a) => {
                 const selected = attendance === a;
                 return (
@@ -258,10 +258,10 @@ function DrawerBody({
                     type="button"
                     onClick={() => setAttendance(a)}
                     aria-pressed={selected}
-                    className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                    className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors ${
                       selected
-                        ? "border-slate-400 bg-white font-semibold text-slate-800"
-                        : "border-slate-200 bg-transparent text-slate-500 hover:border-slate-300"
+                        ? "bg-white font-semibold text-slate-800 shadow-sm"
+                        : "text-slate-500 hover:text-slate-700"
                     }`}
                   >
                     <span aria-hidden>{a === "unattended" ? "🤖" : "🙂"}</span>
