@@ -101,7 +101,8 @@ export function Card({ task }: { task: BoardTask }) {
         </span>
       )}
 
-      {/* Header: short-id pill + attendance marker */}
+      {/* Header: short-id pill (attendance marker now lives in the footer's
+          bottom-right "assignee" slot) */}
       <div className="mb-1.5 flex items-center gap-1.5 pr-4">
         {isPlaceholder ? (
           <span
@@ -116,13 +117,6 @@ export function Card({ task }: { task: BoardTask }) {
             #{task.id}
           </span>
         )}
-        <span
-          className="text-[13px] leading-none"
-          title={isAgent ? "agent (unattended)" : "human (attended)"}
-          aria-label={isAgent ? "agent task" : "attended task"}
-        >
-          {isAgent ? "🤖" : "🙂"}
-        </span>
       </div>
 
       {/* Handwritten title */}
@@ -145,9 +139,27 @@ export function Card({ task }: { task: BoardTask }) {
         </div>
       )}
 
-      {/* footer: updated age */}
-      <div className="mt-2 text-[11px] italic text-slate-500">
-        updated {timeAgo(task.updated_at)}
+      {/* footer: a dashed rule, then updated age (left) + the attendance marker
+          in the bottom-right "assignee" slot (Jira-style): a small circle with
+          H (human/attended) or A (agent/unattended). Hidden while the pending ◷
+          badge owns that corner, so the two never overlap. */}
+      <div className="mt-2 flex items-center justify-between border-t border-dashed border-black/15 pt-2">
+        <span className="text-[11px] italic text-slate-500">
+          updated {timeAgo(task.updated_at)}
+        </span>
+        {!showPending && (
+          <span
+            className={`flex size-6 items-center justify-center rounded-full text-[10px] font-semibold ring-1 ${
+              isAgent
+                ? "bg-violet-100/70 text-violet-700 ring-violet-400/50"
+                : "bg-slate-200/70 text-slate-600 ring-black/15"
+            }`}
+            title={isAgent ? "agent (unattended)" : "human (attended)"}
+            aria-label={isAgent ? "agent task" : "attended task"}
+          >
+            {isAgent ? "A" : "H"}
+          </span>
+        )}
       </div>
     </article>
   );
