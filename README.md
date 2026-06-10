@@ -44,6 +44,31 @@ tasks next --unattended                              # oldest ready, agent-safe
 tasks export --json                                  # whole store for agents
 ```
 
+## Web board
+
+`tasks serve` boots a localhost web board for the current project's store. It is a single-user, read-write view of the same six columns the CLI drives, served from the compiled binary with no extra setup.
+
+```sh
+tasks serve                 # listen on http://127.0.0.1:4317
+tasks serve --port 8080     # pick a port (0 lets the OS choose)
+```
+
+The command prints the listening URL on stdout; open it in a browser:
+
+```
+tasks board listening on http://127.0.0.1:4317
+```
+
+![The Tasks Board web UI](./docs/images/board.png)
+
+What it does:
+
+- **Live updates.** A single filesystem watch on the store rebroadcasts the full board to every open tab over SSE, so a `tasks mv` in the terminal (or an edit from an agent) moves the card in the browser within a moment, no refresh needed. Cards animate when an external change shifts their lane.
+- **Read-write, git-backed.** Creating a task, moving a card between columns, and editing title/body/effort/attendance all reuse the same core as the CLI (flock, dirty-tree guard, validator, one commit per change). The board is just another driver of the store, so every change is still a commit you can `git log`.
+- **Localhost only.** The server binds to `127.0.0.1` with no auth, on the single-user assumption. It refuses to start (non-zero exit, `NOT_INITIALIZED`) when the store does not exist yet, so run `tasks init` first. See [ADR-0016](./docs/adr/0016-board-server-reuses-core-in-process.md) for the design.
+
+The board exposes a small JSON API under `/api` (`GET /api/board`, `GET /api/events` for the SSE stream, `POST /api/tasks`, `POST /api/tasks/:id/move`, `PATCH /api/tasks/:id`) using the same error envelope and codes as the CLI.
+
 ## Frontmatter shape
 
 ```yaml

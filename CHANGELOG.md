@@ -12,6 +12,14 @@ versions; breaking changes will be called out explicitly here.
 
 ### Added
 
+- `tasks serve [--port <n>]` boots a localhost web board for the current
+  project's store. It binds to `127.0.0.1` (single-user, no auth), refuses
+  to start without an initialized store (`NOT_INITIALIZED`), and prints its
+  listening URL on stdout (`--port 0` lets the OS pick). The board is live:
+  a single filesystem watch rebroadcasts the full board to every open tab
+  over SSE, so terminal and agent changes appear without a refresh. Creating,
+  moving, and editing tasks from the board reuse the same git-backed core as
+  the CLI (one commit per change). See ADR-0016.
 - `tasks new --body <text>` sets the body to a literal string, and
   `--body-file <path>` reads the body from a file (`--body-file -` reads
   stdin). `BODY_FILE_ERROR` is emitted when the file can't be read.
