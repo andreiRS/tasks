@@ -1,4 +1,4 @@
-import { createTask, ensureStore, findAllTasks, findFlockOrFail, isStoreDirty, storeDir, type EditorRunner, type TaskData } from "../store.ts";
+import { createTask, ensureStore, findAllTasks, findFlockOrFail, storeDir, type EditorRunner, type TaskData } from "../store.ts";
 import { emit, failFromError, outputContext } from "../cli/output.ts";
 import { validateEnumOrExit, validateTitle } from "../cli/validation.ts";
 import { collectRepeated, getFlagValue } from "../cli/args.ts";
@@ -81,10 +81,11 @@ export async function run(rest: string[]): Promise<void> {
   const dir = storeDir(process.cwd());
   await ensureStore(dir);
 
-  if (await isStoreDirty(dir)) {
-    const msg = "store working tree is dirty; commit or discard pending changes before running mutating commands";
-    emit({ ok: false, code: "STORE_DIRTY", message: msg }, ctx);
-  }
+  // The dirty-tree guard runs INSIDE the flock (in createTask via
+  // withTransaction({ requireClean: true })), serialized with other mutations.
+  // Checking it here, outside the lock, raced concurrent `tasks new` invocations
+  // into spurious STORE_DIRTY (one saw the other mid-mutation). See CLAUDE.md:
+  // acquire flock, THEN dirty-tree guard.
 
   // Resolve --deps refs to UUIDs (need the store to exist for this).
   const resolvedDepUuids: string[] = [];

@@ -84,7 +84,7 @@ export interface CreateTaskOptions {
  * Returns the short id of the new task.
  */
 export async function createTask(dir: string, title: string, opts: CreateTaskOptions = {}): Promise<number> {
-  return withTransaction(dir, { requireValidEnums: true }, async () => {
+  return withTransaction(dir, { requireClean: true, requireValidEnums: true }, async () => {
     // Read or initialize meta.yaml
     const metaPath = join(dir, "meta.yaml");
     let nextId = 1;
