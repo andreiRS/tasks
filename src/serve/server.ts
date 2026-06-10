@@ -12,7 +12,8 @@ import {
   ATTENDANCE_VALUES,
 } from "../store.ts";
 import { computeBlockedBy } from "../render.ts";
-import { buildBoardSnapshot } from "./snapshot.ts";
+import { buildBoardSnapshot, type BoardSnapshot } from "./snapshot.ts";
+import { createLiveSync } from "./live.ts";
 
 export interface ServeOptions {
   dir: string;
@@ -32,6 +33,12 @@ export interface ServeOptions {
 export function startBoardServer(opts: ServeOptions): ReturnType<typeof Bun.serve> {
   const { dir } = opts;
 
+  // Live sync (issue #17 / decision #24): a single shared fs.watch on the Store
+  // root, debounced and `.git`/lock-filtered, rebroadcasts the full board
+  // snapshot to every connected SSE client. See src/serve/live.ts. We pass
+  // `readSnapshot` so SSE frames are byte-identical to a GET /api/board read.
+  const { handleEvents } = createLiveSync(dir, readSnapshot);
+
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: opts.port,
@@ -39,6 +46,9 @@ export function startBoardServer(opts: ServeOptions): ReturnType<typeof Bun.serv
       const url = new URL(req.url);
       if (req.method === "GET" && url.pathname === "/api/board") {
         return handleBoard(dir);
+      }
+      if (req.method === "GET" && url.pathname === "/api/events") {
+        return handleEvents();
       }
       if (req.method === "POST" && url.pathname === "/api/tasks") {
         return handleCreate(dir, req);
@@ -61,17 +71,26 @@ export function startBoardServer(opts: ServeOptions): ReturnType<typeof Bun.serv
   return server;
 }
 
+/**
+ * Assemble the full board snapshot from the Store on disk. Single source of
+ * truth shared by GET /api/board and the SSE broadcast, so an SSE frame is
+ * byte-identical to a board read.
+ *
+ * Archived deps count as Complete, so feed live + archived into the blocker
+ * computation; archive itself is excluded from the lanes by buildBoardSnapshot
+ * (it only groups live tasks).
+ */
+function readSnapshot(dir: string): BoardSnapshot {
+  const liveTasks = findAllTasks(dir);
+  const archivedTasks = findArchivedTasks(dir);
+  const blockedBy = computeBlockedBy([...liveTasks, ...archivedTasks]);
+  return buildBoardSnapshot(dir, liveTasks, blockedBy);
+}
+
 /** GET /api/board — the six-lane board snapshot. */
 function handleBoard(dir: string): Response {
   try {
-    const liveTasks = findAllTasks(dir);
-    const archivedTasks = findArchivedTasks(dir);
-    // Archived deps count as Complete, so feed live + archived into the
-    // blocker computation; archive itself is excluded from the lanes by
-    // buildBoardSnapshot (it only groups live tasks).
-    const blockedBy = computeBlockedBy([...liveTasks, ...archivedTasks]);
-    const snapshot = buildBoardSnapshot(dir, liveTasks, blockedBy);
-    return jsonResponse(snapshot, 200);
+    return jsonResponse(readSnapshot(dir), 200);
   } catch (err) {
     return errorResponse(err);
   }

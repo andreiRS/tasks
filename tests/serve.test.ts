@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COLUMNS } from "../src/store.ts";
 import { statusForCode } from "../src/serve/server.ts";
+import { isIgnoredWatchPath } from "../src/serve/live.ts";
 
 let tasksHome: string;
 let cwdDir: string;
@@ -165,6 +166,91 @@ async function startServe(
     baseUrl,
     stop: () => proc.kill(),
   };
+}
+
+/**
+ * A live reader over an SSE response body. Connect with `openSse`, then
+ * `nextEvent()` to await the next parsed `data:` frame (JSON). Always
+ * `close()` in a finally so the reader is cancelled and the test process can
+ * exit cleanly. `nextEvent` rejects after a bounded timeout so a missed
+ * broadcast fails loudly instead of hanging the suite.
+ */
+interface SseClient {
+  nextEvent: (timeoutMs?: number) => Promise<unknown>;
+  /**
+   * Drain frames until one satisfies `pred`, or the timeout elapses. Models the
+   * SSE convergence contract: each frame is a FULL authoritative snapshot, so a
+   * client just waits for the frame that reflects the change it expects (an
+   * earlier coalesced/stale frame, if any, is harmless and skipped).
+   */
+  waitFor: (pred: (snap: any) => boolean, timeoutMs?: number) => Promise<any>;
+  close: () => Promise<void>;
+}
+
+async function openSse(url: string): Promise<{ res: Response; client: SseClient }> {
+  const ac = new AbortController();
+  const res = await fetch(url, {
+    headers: { accept: "text/event-stream" },
+    signal: ac.signal,
+  });
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  // Frames already parsed but not yet consumed by nextEvent.
+  const queue: unknown[] = [];
+
+  function drainFrames(): void {
+    let idx: number;
+    while ((idx = buf.indexOf("\n\n")) !== -1) {
+      const rawFrame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const dataLines = rawFrame
+        .split("\n")
+        .filter((l) => l.startsWith("data:"))
+        .map((l) => l.slice(5).replace(/^ /, ""));
+      if (dataLines.length === 0) continue; // comment/keep-alive frame
+      queue.push(JSON.parse(dataLines.join("\n")));
+    }
+  }
+
+  async function nextEvent(timeoutMs = 5000): Promise<unknown> {
+    const deadline = Date.now() + timeoutMs;
+    if (queue.length > 0) return queue.shift();
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      const read = reader.read();
+      const timed = new Promise<{ timeout: true }>((resolve) =>
+        setTimeout(() => resolve({ timeout: true }), remaining),
+      );
+      const r = await Promise.race([read, timed]);
+      if ("timeout" in r) break;
+      if (r.done) break;
+      buf += decoder.decode(r.value, { stream: true });
+      drainFrames();
+      if (queue.length > 0) return queue.shift();
+    }
+    throw new Error("timed out waiting for next SSE event");
+  }
+
+  async function waitFor(pred: (snap: any) => boolean, timeoutMs = 8000): Promise<any> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const snap = await nextEvent(deadline - Date.now());
+      if (pred(snap)) return snap;
+    }
+    throw new Error("timed out waiting for a matching SSE snapshot");
+  }
+
+  async function close(): Promise<void> {
+    try {
+      await reader.cancel();
+    } catch {
+      /* already closed */
+    }
+    ac.abort();
+  }
+
+  return { res, client: { nextEvent, waitFor, close } };
 }
 
 // ─── Behavior 1: no-store refusal ────────────────────────────────────────────
@@ -784,6 +870,192 @@ test("PATCH /api/tasks/:id with no editable field is rejected with MISSING_FIELD
     const body = (await res.json()) as { error?: { code?: string } };
     expect(body.error?.code).toBe("MISSING_FIELD");
     expect(await countCommits(storeDir)).toBe(before);
+  } finally {
+    srv.stop();
+  }
+});
+
+// ─── Behavior 13: GET /api/events SSE live sync (issue #17) ───────────────────
+
+test("GET /api/events streams text/event-stream and pushes a fresh snapshot on an out-of-band `tasks mv`", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task");
+  await commitStore(storeDir);
+
+  const srv = await startServe();
+  const { res, client } = await openSse(`${srv.baseUrl}/api/events`);
+  try {
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    expect(res.headers.get("cache-control")).toContain("no-cache");
+
+    // The server sends an initial snapshot on connect: task #1 in backlog.
+    const initial = (await client.nextEvent()) as {
+      lanes: Record<string, Array<{ id: number }>>;
+    };
+    expect(initial.lanes.backlog.map((t) => t.id)).toEqual([1]);
+    expect(initial.lanes.doing.map((t) => t.id)).toEqual([]);
+
+    // Out-of-band mutation from a SEPARATE process — no HTTP read against the
+    // server triggers this. The watcher must observe the commit and rebroadcast.
+    const mv = await runTasks(["mv", "1", "doing"]);
+    expect(mv.exitCode).toBe(0);
+
+    // Converge: the stream pushes the full snapshot reflecting the move. (The
+    // snapshot is authoritative every tick, so we wait for the frame that shows
+    // #1 in doing rather than assuming the first post-mv frame is final.)
+    const update = await client.waitFor(
+      (s) => s.lanes.doing.some((t: { id: number }) => t.id === 1),
+    );
+    expect(update.lanes.doing.map((t: { id: number }) => t.id)).toEqual([1]);
+    expect(update.lanes.backlog.map((t: { id: number }) => t.id)).toEqual([]);
+  } finally {
+    await client.close();
+    srv.stop();
+  }
+});
+
+test("GET /api/events fans the same update out to every connected client", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task");
+  await commitStore(storeDir);
+
+  const srv = await startServe();
+  const a = await openSse(`${srv.baseUrl}/api/events`);
+  const b = await openSse(`${srv.baseUrl}/api/events`);
+  try {
+    // Both connected; drain each initial frame.
+    await a.client.nextEvent();
+    await b.client.nextEvent();
+
+    await runTasks(["mv", "1", "doing"]);
+
+    const inDoing = (s: any) => s.lanes.doing.some((t: { id: number }) => t.id === 1);
+    const ua = await a.client.waitFor(inDoing);
+    const ub = await b.client.waitFor(inDoing);
+    expect(ua.lanes.doing.map((t: { id: number }) => t.id)).toEqual([1]);
+    expect(ub.lanes.doing.map((t: { id: number }) => t.id)).toEqual([1]);
+  } finally {
+    await a.client.close();
+    await b.client.close();
+    srv.stop();
+  }
+});
+
+test("GET /api/events: rapid successive commits converge — the final correct snapshot is delivered", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task");
+  await commitStore(storeDir);
+
+  const srv = await startServe();
+  const { client } = await openSse(`${srv.baseUrl}/api/events`);
+  try {
+    await client.nextEvent(); // initial
+
+    // Three successive moves (each its own commit) in quick succession. The
+    // debounce may coalesce broadcasts, but the FINAL state (#1 in done) must
+    // arrive — convergence, not a missed terminal state.
+    expect((await runTasks(["mv", "1", "doing"])).exitCode).toBe(0);
+    expect((await runTasks(["mv", "1", "review"])).exitCode).toBe(0);
+    expect((await runTasks(["mv", "1", "done"])).exitCode).toBe(0);
+
+    const final = await client.waitFor(
+      (s) => s.lanes.done.some((t: { id: number }) => t.id === 1),
+    );
+    expect(final.lanes.done.map((t: { id: number }) => t.id)).toEqual([1]);
+    // #1 is in done only — not lingering in any earlier lane.
+    expect(final.lanes.backlog.map((t: { id: number }) => t.id)).toEqual([]);
+    expect(final.lanes.doing.map((t: { id: number }) => t.id)).toEqual([]);
+    expect(final.lanes.review.map((t: { id: number }) => t.id)).toEqual([]);
+  } finally {
+    await client.close();
+    srv.stop();
+  }
+});
+
+test("isIgnoredWatchPath drops git/lock churn but keeps real Column changes (so .git housekeeping never spams broadcasts)", () => {
+  // Ignored: git internals + the flock file + null paths.
+  expect(isIgnoredWatchPath(".git")).toBe(true);
+  expect(isIgnoredWatchPath(".git/index")).toBe(true);
+  expect(isIgnoredWatchPath(".git/objects/ab/cdef")).toBe(true);
+  expect(isIgnoredWatchPath(".git/refs/heads/main")).toBe(true);
+  expect(isIgnoredWatchPath(".tasks-lock")).toBe(true);
+  expect(isIgnoredWatchPath(null)).toBe(true);
+
+  // Kept: a Column-dir change is exactly what should trigger a rebroadcast.
+  expect(isIgnoredWatchPath("backlog/1-a-task.md")).toBe(false);
+  expect(isIgnoredWatchPath("doing/1-a-task.md")).toBe(false);
+  expect(isIgnoredWatchPath("archive/9-old.md")).toBe(false);
+  expect(isIgnoredWatchPath("meta.yaml")).toBe(false);
+  // Not a false positive on a name that merely starts with the git prefix.
+  expect(isIgnoredWatchPath(".gitignore")).toBe(false);
+});
+
+test("GET /api/events: a disconnected client is dropped cleanly — later mv still broadcasts to survivors, no error", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task");
+  await commitStore(storeDir);
+
+  const srv = await startServe();
+  const dropped = await openSse(`${srv.baseUrl}/api/events`);
+  const survivor = await openSse(`${srv.baseUrl}/api/events`);
+  try {
+    await dropped.client.nextEvent();
+    await survivor.client.nextEvent();
+
+    // First client disconnects (cancels its stream). The server must remove its
+    // controller; a later broadcast must NOT throw writing to the dead one.
+    await dropped.client.close();
+    // Give the cancel() callback a beat to run on the server side.
+    await runTasks(["mv", "1", "doing"]);
+
+    // The survivor still converges — proves the broadcast loop didn't blow up on
+    // the dead controller and the shared watcher is still alive.
+    const update = await survivor.client.waitFor(
+      (s) => s.lanes.doing.some((t: { id: number }) => t.id === 1),
+    );
+    expect(update.lanes.doing.map((t: { id: number }) => t.id)).toEqual([1]);
+
+    // Server is still alive and serving (it never crashed on the dead write).
+    const ok = await fetch(`${srv.baseUrl}/api/board`);
+    expect(ok.status).toBe(200);
+    expect(srv.proc.killed).toBe(false);
+  } finally {
+    await survivor.client.close();
+    srv.stop();
+  }
+});
+
+test("GET /api/events: last client leaving and a new one joining still works (watcher teardown + restart)", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task");
+  await commitStore(storeDir);
+
+  const srv = await startServe();
+  try {
+    // First client connects then leaves — the LAST client leaving tears the
+    // watcher down. A fresh client must transparently restart it and still get
+    // live updates (no leaked-but-dead watcher state).
+    const first = await openSse(`${srv.baseUrl}/api/events`);
+    await first.client.nextEvent();
+    await first.client.close();
+
+    const second = await openSse(`${srv.baseUrl}/api/events`);
+    try {
+      await second.client.nextEvent();
+      await runTasks(["mv", "1", "doing"]);
+      const update = await second.client.waitFor(
+        (s) => s.lanes.doing.some((t: { id: number }) => t.id === 1),
+      );
+      expect(update.lanes.doing.map((t: { id: number }) => t.id)).toEqual([1]);
+    } finally {
+      await second.client.close();
+    }
   } finally {
     srv.stop();
   }
