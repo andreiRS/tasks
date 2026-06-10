@@ -9,7 +9,7 @@ import { CSS } from "@dnd-kit/utilities";
 import type { BoardTask } from "./types";
 import { useBoardStore } from "../store";
 import { seededStyle } from "./seed";
-import { EFFORT_DOT } from "./effort";
+import { EffortBadge } from "./effort";
 import { timeAgo } from "./time";
 
 export function Card({ task }: { task: BoardTask }) {
@@ -18,7 +18,6 @@ export function Card({ task }: { task: BoardTask }) {
   // snapshot replaces it with the real card.
   const isPlaceholder = task.id < 0;
   const { bg, edge, tilt } = seededStyle(isPlaceholder ? 0 : task.id);
-  const effort = EFFORT_DOT[task.effort];
   const isBlocked = task.blockedBy.length > 0;
   const isAgent = task.attendance === "unattended";
 
@@ -82,13 +81,8 @@ export function Card({ task }: { task: BoardTask }) {
         viewTransitionName: isPlaceholder ? undefined : `card-${task.uuid}`,
       }}
     >
-      {/* Effort dot — top-right corner */}
-      <span
-        className="absolute right-2 top-2 size-2.5 rounded-full ring-1 ring-black/10"
-        style={{ backgroundColor: effort.color }}
-        title={effort.label}
-        aria-label={effort.label}
-      />
+      {/* Effort t-shirt size (S/M/L) — a colored taped tab straddling the top edge */}
+      <EffortBadge effort={task.effort} variant="tab" className="absolute -top-0 right-4 z-10" />
 
       {/* Pending clock badge — tiny bottom-right corner element, no layout shift */}
       {showPending && (

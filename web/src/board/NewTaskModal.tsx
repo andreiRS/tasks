@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { useBoardStore } from "../store";
 import type { Effort } from "./types";
-import { EFFORT_DOT } from "./effort";
+import { EffortBadge } from "./effort";
 
 const EFFORTS: Effort[] = ["low", "medium", "high"];
 
@@ -150,10 +150,7 @@ export function NewTaskModal({ open, onClose }: { open: boolean; onClose: () => 
                       : "border-slate-200 bg-transparent text-slate-500 hover:border-slate-300"
                   }`}
                 >
-                  <span
-                    className="size-2.5 rounded-full ring-1 ring-black/10"
-                    style={{ backgroundColor: EFFORT_DOT[e].color }}
-                  />
+                  <EffortBadge effort={e} />
                   {e}
                 </button>
               );
