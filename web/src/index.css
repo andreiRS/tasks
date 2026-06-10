@@ -1,1 +1,16 @@
 @import "tailwindcss";
+
+/* Handwriting-ish title font, drawn from fonts that ship with the OS — no
+   network webfont, so the embedded-binary offline story (ADR-0016) stays
+   intact. Generates the `font-script` utility (Tailwind v4 @theme). */
+@theme {
+  --font-script:
+    "Bradley Hand", "Segoe Print", "Comic Sans MS", "Apple Chancery",
+    "Chalkboard SE", "Marker Felt", cursive;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}

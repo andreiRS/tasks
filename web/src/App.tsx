@@ -1,55 +1,49 @@
-import { useEffect, useState } from "react";
+// `tasks serve` board UI (#18) — read-only six-lane board over GET /api/board.
+// Drag (#19), SSE live updates (#20), the create modal (#21) and the detail
+// drawer (#22) build on this; they are deliberately NOT implemented here.
 
-/**
- * Scaffold shell for `tasks serve` (issue #25). This is intentionally minimal
- * but NON-trivial: a real React component with state + an effect that calls the
- * live `/api/board` endpoint, with Tailwind utility classes actually applied so
- * the compiled CSS asset is exercised. Issue #18 replaces this with the real
- * six-lane board (see web/README.md for where board code + the Zustand store go).
- */
+import { useEffect } from "react";
+import { useBoardStore } from "./store";
+import { Rail } from "./board/Rail";
+import { Board } from "./board/Board";
+import { timeAgo } from "./board/time";
+
 export function App() {
-  const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
-  const [columns, setColumns] = useState<string[]>([]);
+  const board = useBoardStore((s) => s.board);
+  const status = useBoardStore((s) => s.status);
+  const error = useBoardStore((s) => s.error);
+  const load = useBoardStore((s) => s.load);
 
   useEffect(() => {
-    let alive = true;
-    fetch("/api/board")
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((snap: { lanes?: Record<string, unknown[]> }) => {
-        if (!alive) return;
-        setColumns(Object.keys(snap.lanes ?? {}));
-        setStatus("ok");
-      })
-      .catch(() => alive && setStatus("error"));
-    return () => {
-      alive = false;
-    };
-  }, []);
+    void load();
+  }, [load]);
 
   return (
-    <main className="min-h-screen bg-slate-100 p-8 font-sans text-slate-800">
-      <h1 className="text-2xl font-bold tracking-tight">tasks board</h1>
-      <p className="mt-2 text-sm text-slate-500">
-        Scaffold shell. The six-lane board lands in #18.
-      </p>
-      <div className="mt-4 inline-flex items-center gap-2 rounded-md bg-white px-3 py-2 shadow">
-        <span
-          className={
-            status === "ok"
-              ? "size-2 rounded-full bg-green-500"
-              : status === "error"
-                ? "size-2 rounded-full bg-red-500"
-                : "size-2 rounded-full bg-amber-400"
-          }
-        />
-        <span className="text-sm">
-          {status === "loading"
-            ? "contacting /api/board…"
-            : status === "ok"
-              ? `connected — ${columns.length} columns`
-              : "could not reach /api/board"}
-        </span>
-      </div>
-    </main>
+    <div className="flex min-h-screen bg-[#f4f1ea] text-slate-800">
+      <Rail />
+
+      <main className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-baseline justify-between px-6 pt-5">
+          <h1 className="font-script text-3xl text-slate-800">board</h1>
+          {board?.head && (
+            <span className="text-xs text-slate-400">
+              board {timeAgo(board.head.committed_at)}
+            </span>
+          )}
+        </header>
+
+        {status === "loading" && (
+          <p className="px-6 pt-6 text-sm text-slate-400">loading board…</p>
+        )}
+
+        {status === "error" && (
+          <p className="px-6 pt-6 text-sm text-red-600">
+            could not reach /api/board{error ? ` (${error})` : ""}
+          </p>
+        )}
+
+        {status === "ready" && board && <Board board={board} />}
+      </main>
+    </div>
   );
 }
