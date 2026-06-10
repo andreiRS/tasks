@@ -210,6 +210,12 @@ interface SseClient {
    * earlier coalesced/stale frame, if any, is harmless and skipped).
    */
   waitFor: (pred: (snap: any) => boolean, timeoutMs?: number) => Promise<any>;
+  /**
+   * Resolve once a comment frame (a line starting with `:`, e.g. the heartbeat
+   * keep-alive) has been seen on the stream, or reject after the timeout. Lets a
+   * test assert the server keeps an idle connection warm with no mutation.
+   */
+  waitForComment: (timeoutMs?: number) => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -224,6 +230,8 @@ async function openSse(url: string): Promise<{ res: Response; client: SseClient 
   let buf = "";
   // Frames already parsed but not yet consumed by nextEvent.
   const queue: unknown[] = [];
+  // Latches once a comment frame (`:`-prefixed, e.g. the heartbeat) is seen.
+  let commentSeen = false;
 
   function drainFrames(): void {
     let idx: number;
@@ -234,7 +242,10 @@ async function openSse(url: string): Promise<{ res: Response; client: SseClient 
         .split("\n")
         .filter((l) => l.startsWith("data:"))
         .map((l) => l.slice(5).replace(/^ /, ""));
-      if (dataLines.length === 0) continue; // comment/keep-alive frame
+      if (dataLines.length === 0) {
+        if (rawFrame.trimStart().startsWith(":")) commentSeen = true;
+        continue; // comment/keep-alive frame
+      }
       queue.push(JSON.parse(dataLines.join("\n")));
     }
   }
@@ -267,6 +278,25 @@ async function openSse(url: string): Promise<{ res: Response; client: SseClient 
     throw new Error("timed out waiting for a matching SSE snapshot");
   }
 
+  async function waitForComment(timeoutMs = 5000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    if (commentSeen) return;
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      const read = reader.read();
+      const timed = new Promise<{ timeout: true }>((resolve) =>
+        setTimeout(() => resolve({ timeout: true }), remaining),
+      );
+      const r = await Promise.race([read, timed]);
+      if ("timeout" in r) break;
+      if (r.done) break;
+      buf += decoder.decode(r.value, { stream: true });
+      drainFrames();
+      if (commentSeen) return;
+    }
+    throw new Error("timed out waiting for an SSE heartbeat comment");
+  }
+
   async function close(): Promise<void> {
     try {
       await reader.cancel();
@@ -276,7 +306,7 @@ async function openSse(url: string): Promise<{ res: Response; client: SseClient 
     ac.abort();
   }
 
-  return { res, client: { nextEvent, waitFor, close } };
+  return { res, client: { nextEvent, waitFor, waitForComment, close } };
 }
 
 // ─── Behavior 1: no-store refusal ────────────────────────────────────────────
@@ -936,6 +966,29 @@ test("GET /api/events streams text/event-stream and pushes a fresh snapshot on a
     );
     expect(update.lanes.doing.map((t: { id: number }) => t.id)).toEqual([1]);
     expect(update.lanes.backlog.map((t: { id: number }) => t.id)).toEqual([]);
+  } finally {
+    await client.close();
+    srv.stop();
+  }
+});
+
+test("GET /api/events keeps an idle stream warm with periodic heartbeat comments (no mutation needed)", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task");
+  await commitStore(storeDir);
+
+  // Tiny heartbeat interval so the test doesn't wait the production cadence.
+  // Without a heartbeat an idle SSE connection can silently stall behind a
+  // buffering proxy (the dev Vite proxy did exactly this): no frame, no error,
+  // so neither native retry nor our self-healing reconnect ever recovers it.
+  const srv = await startServe([], { TASKS_SSE_HEARTBEAT_MS: "120" });
+  const { client } = await openSse(`${srv.baseUrl}/api/events`);
+  try {
+    // Drain the initial snapshot, then with NO mutation at all a heartbeat
+    // comment must still arrive — proof the connection is kept warm.
+    await client.nextEvent();
+    await client.waitForComment(2000);
   } finally {
     await client.close();
     srv.stop();
