@@ -27,7 +27,7 @@ bun link                # exposes `tasks` on $PATH
 tasks --help
 ```
 
-For a standalone binary (no Bun at runtime): `bun run build` produces `dist/tasks`. To run without linking while developing: `bun run src/cli.ts <command> [...args]`.
+For a standalone binary (no Bun at runtime): `bun run build` produces `dist/tasks` (CLI only — it does **not** embed the web board UI). To get a binary with the board baked in, use `bun run build:binary`, which builds the web app and embeds it before compiling. To run without linking while developing: `bun run src/cli.ts <command> [...args]`.
 
 Environment:
 - `$TASKS_HOME` — where stores live (default `~/.tasks`). Tests override it for hermetic tempdirs.
@@ -52,6 +52,13 @@ tasks export --json                                  # whole store for agents
 tasks serve                 # listen on http://127.0.0.1:4317
 tasks serve --port 8080     # pick a port (0 lets the OS choose)
 ```
+
+The board UI has to be built before `tasks serve` can show it. There are two ways:
+
+- **From a linked / source install** (`bun link`, or `bun run src/cli.ts`): build the web app once with `bun run build:web`. After that, `tasks serve` auto-serves the built `web/dist`, so the URL shows the real board.
+- **From the compiled binary**: `bun run build:binary` embeds the UI, so `./dist/tasks serve` needs no separate web build.
+
+If you haven't built the UI, `tasks serve` still runs the JSON API and now shows a short page at `/` telling you which command to run, instead of a raw error. If `serve` exits with `EADDRINUSE`, a board is already listening on that port — open it, or pass `--port 0` for a fresh one.
 
 The command prints the listening URL on stdout; open it in a browser:
 

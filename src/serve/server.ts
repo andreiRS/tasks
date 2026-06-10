@@ -21,6 +21,45 @@ export interface ServeOptions {
 }
 
 /**
+ * Shown when `serve` has no web UI to host (a source run with no built web/dist,
+ * and no embedded SPA). The board API is up, so we explain the two ways to get
+ * the UI rather than 404 the browser. Kept inline (no asset dependency — the
+ * whole point is that assets are missing) and deliberately tiny.
+ */
+const NO_UI_HTML = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tasks board — UI not built</title>
+<style>
+  body { font: 15px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 4rem auto; padding: 0 1.5rem; color: #1a1a1a; }
+  code { background: #f1f1f1; padding: .15em .4em; border-radius: 4px; }
+  h1 { font-size: 1.4rem; } .ok { color: #137333; }
+</style></head>
+<body>
+  <h1>The board API is running, but the web UI isn’t built yet</h1>
+  <p>You reached <code>tasks serve</code>, but it has no web interface to show in this run.
+     The JSON API under <code>/api</code> is live — for example
+     <a href="/api/board">/api/board</a> works.</p>
+  <p>To see the visual board, pick one:</p>
+  <ul>
+    <li><strong>Build the web UI once</strong>, then restart <code>tasks serve</code> — it auto-serves
+        the built <code>web/dist</code> from source:<br><code>bun run build:web</code></li>
+    <li><strong>Use the compiled binary</strong> (self-contained, UI embedded):<br>
+        <code>bun run build:binary</code> then <code>./dist/tasks serve</code></li>
+  </ul>
+  <p class="ok">Then refresh this page.</p>
+</body>
+</html>
+`;
+
+/** One-line boot warning (stderr) mirroring the guidance page, so the fix is
+ *  visible in the terminal too, not only in the browser. */
+const NO_UI_WARNING =
+  "tasks serve: no web UI found — serving the JSON API only. " +
+  "Run `bun run build:web` (then restart) to serve the board from web/dist, " +
+  "or use the compiled binary: `bun run build:binary` then ./dist/tasks serve.\n";
+
+/**
  * Boot the localhost-only board HTTP server. Binds to 127.0.0.1 (no remote
  * exposure, no auth — single-user assumption, see ADR-0016). Announces its
  * listening URL on stdout so callers (and the test harness) can discover the
@@ -45,10 +84,15 @@ export async function startBoardServer(opts: ServeOptions): Promise<ReturnType<t
       ? createLiveSync(dir, readSnapshot)
       : createLiveSync(dir, readSnapshot, heartbeatMs);
 
-  // Asset-serving seam (issue #25, see src/serve/assets.ts): in the compiled
-  // binary this is the embedded Vite SPA; in dev it is `null` (Vite dev server
-  // fronts the UI and proxies /api here). Resolved once at boot.
+  // Asset-serving seam (issue #25, see src/serve/assets.ts): the compiled binary
+  // serves its embedded SPA; a source run serves a locally-built web/dist when
+  // present. When neither exists we have no UI to host — warn loudly at boot so a
+  // user who opened the board URL and got the guidance page knows the one-line
+  // fix, instead of staring at a bare JSON 404. Resolved once at boot.
   const assets = await loadAssets();
+  if (!assets) {
+    process.stderr.write(NO_UI_WARNING);
+  }
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -80,12 +124,22 @@ export async function startBoardServer(opts: ServeOptions): Promise<ReturnType<t
         return handleEdit(dir, decodeURIComponent(editMatch[1]!), req);
       }
 
-      // Non-API routes: serve the SPA when assets are present (prod binary).
-      // ANY path whose first segment is `api` (bare `/api` AND `/api/...`) is the
-      // API namespace and must fall through to the JSON NOT_FOUND envelope below,
-      // NEVER the SPA shell — a 200 text/html where JSON was expected hides bugs.
-      // (A bare `/api` previously slipped past a `startsWith('/api/')`-only guard.)
-      if (assets && !isApiNamespace(url.pathname) && req.method === "GET") {
+      // Non-API routes: serve the SPA when assets are present (prod binary or a
+      // source run with a built web/dist). ANY path whose first segment is `api`
+      // (bare `/api` AND `/api/...`) is the API namespace and must fall through to
+      // the JSON NOT_FOUND envelope below, NEVER the SPA shell — a 200 text/html
+      // where JSON was expected hides bugs. (A bare `/api` previously slipped past
+      // a `startsWith('/api/')`-only guard.)
+      if (!isApiNamespace(url.pathname) && req.method === "GET") {
+        // No UI to serve: hand back a small guidance page (how to enable the
+        // board) rather than the JSON NOT_FOUND envelope, which reads as a broken
+        // server to anyone who just opened the board URL in a browser.
+        if (!assets) {
+          return new Response(NO_UI_HTML, {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        }
         return serveAsset(assets, url.pathname);
       }
 

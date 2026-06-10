@@ -62,16 +62,40 @@ export function contentTypeFor(path: string): string {
 }
 
 /**
- * Resolve the active asset bundle, or `null` when none is present (dev).
+ * Resolve the active asset bundle, or `null` when none is present.
  * Order: explicit `TASKS_WEB_DIST` (test/dev affordance) → embedded files
- * (compiled binary) → null.
+ * (compiled binary) → a source-relative `web/dist` (dev convenience) → null.
  */
 export async function loadAssets(): Promise<AssetBundle | null> {
   const distDir = process.env.TASKS_WEB_DIST;
-  if (distDir && existsSync(join(distDir, "index.html"))) {
-    return loadFromDir(distDir);
+  if (distDir !== undefined && distDir !== "") {
+    // An explicit override is authoritative: serve it when it has a build, else
+    // report "no disk assets" WITHOUT consulting the default dev dist. This lets
+    // a test force the asset-less path by pointing at an empty directory, and
+    // lets an operator pin a specific build.
+    if (existsSync(join(distDir, "index.html"))) return loadFromDir(distDir);
+    return loadFromEmbedded();
   }
-  return loadFromEmbedded();
+
+  // No override: the compiled binary serves its embedded build first.
+  const embedded = await loadFromEmbedded();
+  if (embedded) return embedded;
+
+  // Running from source (`bun run src/cli.ts`, or a `bun link`ed `tasks`): serve
+  // a locally-built `web/dist` when it exists, so `tasks serve` shows the real
+  // board after a one-time `bun run build:web` without compiling the full binary.
+  // The path is resolved relative to THIS source file (not cwd), so it resolves
+  // through a `bun link` symlink back to the repo too.
+  const devDist = defaultDevDistDir();
+  if (existsSync(join(devDist, "index.html"))) return loadFromDir(devDist);
+  return null;
+}
+
+/** The conventional `web/dist` location relative to this source file
+ *  (src/serve/assets.ts → ../../web/dist). In a compiled binary this points
+ *  inside the read-only bundle and won't exist, so the embedded path wins. */
+function defaultDevDistDir(): string {
+  return join(import.meta.dir, "..", "..", "web", "dist");
 }
 
 /**
