@@ -17,7 +17,7 @@
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import { useBoardStore } from "../store";
 import type { Attendance, BoardTask, Effort } from "./types";
-import { EFFORT_DOT } from "./effort";
+import { EffortBadge } from "./effort";
 import { Markdown } from "./Markdown";
 
 const EFFORTS: Effort[] = ["low", "medium", "high"];
@@ -235,10 +235,7 @@ function DrawerBody({
                         : "border-slate-200 bg-transparent text-slate-500 hover:border-slate-300"
                     }`}
                   >
-                    <span
-                      className="size-2.5 rounded-full ring-1 ring-black/10"
-                      style={{ backgroundColor: EFFORT_DOT[e].color }}
-                    />
+                    <EffortBadge effort={e} />
                     {e}
                   </button>
                 );
@@ -311,10 +308,7 @@ function DrawerBody({
           {/* Meta row: effort + attendance */}
           <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600">
             <span className="flex items-center gap-1.5">
-              <span
-                className="size-2.5 rounded-full ring-1 ring-black/10"
-                style={{ backgroundColor: EFFORT_DOT[card.effort].color }}
-              />
+              <EffortBadge effort={card.effort} />
               {card.effort} effort
             </span>
             <span className="flex items-center gap-1.5">
