@@ -60,7 +60,7 @@ export function App() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#f4f1ea] text-slate-800">
+    <div className="flex h-screen overflow-hidden bg-[var(--paper)] text-slate-800 dark:text-slate-200">
       <Rail />
 
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">

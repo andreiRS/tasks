@@ -85,7 +85,7 @@ export function NewTaskModal({ open, onClose }: { open: boolean; onClose: () => 
       onClick={(e) => {
         if (e.target === dialogRef.current) onClose();
       }}
-      className="m-auto w-[min(32rem,92vw)] rounded-lg border border-slate-200 bg-[#faf8f2] p-0 text-slate-800 shadow-2xl backdrop:bg-black/30"
+      className="m-auto w-[min(32rem,92vw)] rounded-lg border border-slate-200 bg-[var(--paper-raised)] p-0 text-slate-800 shadow-2xl backdrop:bg-black/30 dark:border-slate-700 dark:text-slate-200"
     >
       <form onSubmit={handleSubmit} className="flex flex-col gap-4 p-6">
         <h2 id="new-task-title" className="font-script text-2xl text-slate-800">

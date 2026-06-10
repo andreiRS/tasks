@@ -99,7 +99,7 @@ function Drawer({
       }}
       // Pin to the right edge, full-height panel. The default <dialog> centering
       // margins are overridden so it reads as a side drawer over a dim backdrop.
-      className="m-0 ml-auto h-full max-h-none w-[min(34rem,94vw)] rounded-none border-l border-slate-200 bg-[#faf8f2] p-0 text-slate-800 shadow-2xl backdrop:bg-black/30"
+      className="m-0 ml-auto h-full max-h-none w-[min(34rem,94vw)] rounded-none border-l border-slate-200 bg-[var(--paper-raised)] p-0 text-slate-800 shadow-2xl backdrop:bg-black/30 dark:border-slate-700 dark:text-slate-200"
     >
       {children}
     </dialog>

@@ -16,7 +16,7 @@ export function Lane({ column, tasks }: { column: string; tasks: BoardTask[] }) 
 
   return (
     <section className="flex w-72 shrink-0 flex-col">
-      <header className="sticky top-0 z-10 mb-3 flex items-baseline justify-between bg-[#f4f1ea] px-1 pb-2 pt-1">
+      <header className="sticky top-0 z-10 mb-3 flex items-baseline justify-between bg-[var(--paper)] px-1 pb-2 pt-1">
         <h2 className="font-script text-xl text-slate-700">{laneTitle(column)}</h2>
         <span className="rounded-full bg-slate-200 px-2 py-0.5 font-mono text-xs font-semibold text-slate-500">
           {tasks.length}

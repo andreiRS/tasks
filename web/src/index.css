@@ -9,6 +9,45 @@
     "Chalkboard SE", "Marker Felt", cursive;
 }
 
+/* ── Manual dark mode (UserMenu's Light/Dark/System toggle stamps
+   `<html data-theme=...>`). Override Tailwind's `dark:` variant so it fires
+   when the user PICKED dark, or when they picked system AND the OS is dark.
+   Picking light never matches. This is the one place the system→OS fallthrough
+   lives, so `dark:` utilities elsewhere "just work" for all three modes.
+   (v4 @custom-variant block form with @slot — confirmed against the v4 docs.) */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where([data-theme="system"], [data-theme="system"] *) {
+      @slot;
+    }
+  }
+}
+
+/* Surface tokens for the two warm-paper backgrounds that are hardcoded hex
+   (so they have no slate `dark:` equivalent): the board "paper" (app shell +
+   lane sticky headers) and the raised paper (drawer + modal). They swap on the
+   SAME condition as the `dark` variant above — explicit dark, or system+OS-dark
+   — so a component just references `var(--paper)` / `var(--paper-raised)` and
+   stays correct across all three modes. Tilt/seed card colors are handled
+   separately (they're per-id). */
+:root {
+  --paper: #f4f1ea;
+  --paper-raised: #faf8f2;
+}
+[data-theme="dark"] {
+  --paper: #16161a;
+  --paper-raised: #1e1e24;
+}
+@media (prefers-color-scheme: dark) {
+  [data-theme="system"] {
+    --paper: #16161a;
+    --paper-raised: #1e1e24;
+  }
+}
+
 html,
 body,
 #root {
