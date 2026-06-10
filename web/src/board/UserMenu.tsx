@@ -53,7 +53,7 @@ export function UserMenu() {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Menu"
-        className="flex size-9 items-center justify-center rounded-full bg-slate-200 text-slate-600 ring-1 ring-black/5 transition-colors hover:bg-slate-300 hover:text-slate-800"
+        className="flex size-9 items-center justify-center rounded-full bg-slate-200 text-slate-600 ring-1 ring-black/5 transition-colors hover:bg-slate-300 hover:text-slate-800 dark:bg-slate-700 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-600 dark:hover:text-slate-100"
       >
         {/* Generic avatar glyph — no auth/user model, so this is the board's seat. */}
         <svg viewBox="0 0 24 24" fill="currentColor" className="size-5" aria-hidden>
@@ -64,25 +64,25 @@ export function UserMenu() {
       {open && (
         <div
           role="menu"
-          className="absolute bottom-0 left-[calc(100%+0.5rem)] z-30 w-64 overflow-hidden rounded-lg border border-slate-200 bg-white text-slate-800 shadow-xl"
+          className="absolute bottom-0 left-[calc(100%+0.5rem)] z-30 w-64 overflow-hidden rounded-lg border border-slate-200 bg-white text-slate-800 shadow-xl dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
         >
           {/* Identity header — stands in for the tracked project/board. */}
-          <div className="flex items-center gap-2.5 border-b border-slate-100 px-3 py-3">
-            <div className="flex size-8 items-center justify-center rounded-md bg-slate-800 font-script text-base leading-none text-amber-200">
+          <div className="flex items-center gap-2.5 border-b border-slate-100 px-3 py-3 dark:border-slate-700/60">
+            <div className="flex size-8 items-center justify-center rounded-md bg-slate-800 font-script text-base leading-none text-amber-200 dark:ring-1 dark:ring-white/10">
               t
             </div>
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold">tasks</div>
-              <div className="truncate text-xs text-slate-400">this board</div>
+              <div className="truncate text-xs text-slate-400 dark:text-slate-500">this board</div>
             </div>
           </div>
 
           {/* Appearance — the one live control (placeholder otherwise). */}
           <div className="px-3 py-2.5">
-            <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
               appearance
             </div>
-            <div className="inline-flex w-full gap-1 rounded-lg bg-slate-100 p-1">
+            <div className="inline-flex w-full gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-900/60">
               {THEMES.map((t) => {
                 const selected = theme === t;
                 return (
@@ -93,8 +93,8 @@ export function UserMenu() {
                     aria-pressed={selected}
                     className={`flex-1 rounded-md px-2 py-1 text-xs capitalize transition-colors ${
                       selected
-                        ? "bg-white font-semibold text-slate-800 shadow-sm"
-                        : "text-slate-500 hover:text-slate-700"
+                        ? "bg-white font-semibold text-slate-800 shadow-sm dark:bg-slate-700 dark:text-slate-100"
+                        : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                     }`}
                   >
                     {t}
@@ -105,17 +105,17 @@ export function UserMenu() {
           </div>
 
           {/* Reserved for future tools — inert placeholders. */}
-          <div className="border-t border-slate-100 py-1">
+          <div className="border-t border-slate-100 py-1 dark:border-slate-700/60">
             {["Preferences", "Keyboard shortcuts"].map((label) => (
               <button
                 key={label}
                 type="button"
                 disabled
                 role="menuitem"
-                className="flex w-full cursor-not-allowed items-center justify-between px-3 py-1.5 text-left text-sm text-slate-400"
+                className="flex w-full cursor-not-allowed items-center justify-between px-3 py-1.5 text-left text-sm text-slate-400 dark:text-slate-500"
               >
                 {label}
-                <span className="text-[10px] uppercase tracking-wide text-slate-300">soon</span>
+                <span className="text-[10px] uppercase tracking-wide text-slate-300 dark:text-slate-600">soon</span>
               </button>
             ))}
           </div>

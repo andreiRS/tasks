@@ -59,19 +59,19 @@ export function Toast() {
       ref={ref}
       popover="manual"
       role="alert"
-      className="fixed inset-auto bottom-4 right-4 z-50 m-0 flex max-w-sm items-start gap-3 rounded-md border border-red-200 bg-white px-4 py-3 shadow-lg"
+      className="fixed inset-auto bottom-4 right-4 z-50 m-0 flex max-w-sm items-start gap-3 rounded-md border border-red-200 bg-white px-4 py-3 shadow-lg dark:border-red-900/50 dark:bg-slate-800"
     >
       <div className="min-w-0">
-        <p className="font-mono text-[11px] font-semibold uppercase tracking-wide text-red-600">
+        <p className="font-mono text-[11px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400">
           {toast.code}
         </p>
-        <p className="mt-0.5 text-sm text-slate-700 break-words">{toast.message}</p>
+        <p className="mt-0.5 text-sm text-slate-700 break-words dark:text-slate-300">{toast.message}</p>
       </div>
       <button
         type="button"
         onClick={dismiss}
         aria-label="dismiss"
-        className="shrink-0 rounded px-1 text-slate-400 hover:text-slate-700"
+        className="shrink-0 rounded px-1 text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-200"
       >
         ✕
       </button>

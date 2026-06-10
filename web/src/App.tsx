@@ -66,7 +66,7 @@ export function App() {
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex items-baseline justify-between px-6 pt-5">
           <div className="flex items-baseline gap-3">
-            <h1 className="font-script text-3xl text-slate-800">Tasks Board</h1>
+            <h1 className="font-script text-3xl text-slate-800 dark:text-slate-100">Tasks Board</h1>
             {board?.head && (
               <span className="text-xs text-slate-400">
                 updated {timeAgo(board.head.committed_at)}
@@ -77,7 +77,7 @@ export function App() {
             <button
               type="button"
               onClick={() => setShowNewTask(true)}
-              className="self-center rounded-md bg-slate-800 px-3 py-1.5 text-sm font-semibold text-amber-100 shadow-sm hover:bg-slate-700"
+              className="self-center rounded-md bg-slate-800 px-3 py-1.5 text-sm font-semibold text-amber-100 shadow-sm hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 dark:ring-1 dark:ring-white/10"
             >
               + new task
             </button>
@@ -92,7 +92,7 @@ export function App() {
         {status === "ready" && connection === "reconnecting" && (
           <span
             role="status"
-            className="fixed left-1/2 top-3 z-50 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs text-amber-700 shadow-md ring-1 ring-amber-200/70"
+            className="fixed left-1/2 top-3 z-50 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs text-amber-700 shadow-md ring-1 ring-amber-200/70 dark:bg-amber-950/70 dark:text-amber-200 dark:ring-amber-400/25"
           >
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
             live connection lost — reconnecting…
@@ -100,16 +100,16 @@ export function App() {
         )}
 
         {status === "loading" && (
-          <p className="px-6 pt-6 text-sm text-slate-400">loading board…</p>
+          <p className="px-6 pt-6 text-sm text-slate-400 dark:text-slate-500">loading board…</p>
         )}
 
         {status === "error" && (
-          <p className="px-6 pt-6 text-sm text-red-600">
+          <p className="px-6 pt-6 text-sm text-red-600 dark:text-red-400">
             could not reach the board{error ? ` (${error})` : ""}{" "}
             <button
               type="button"
               onClick={() => void load()}
-              className="underline underline-offset-2 hover:text-red-700"
+              className="underline underline-offset-2 hover:text-red-700 dark:hover:text-red-300"
             >
               retry
             </button>

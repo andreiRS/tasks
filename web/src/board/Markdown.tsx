@@ -12,7 +12,7 @@ import remarkGfm from "remark-gfm";
 
 export function Markdown({ children }: { children: string }) {
   return (
-    <div className="markdown-body text-sm leading-relaxed text-slate-700">
+    <div className="markdown-body text-sm leading-relaxed text-slate-700 dark:text-slate-300">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -31,9 +31,9 @@ export function Markdown({ children }: { children: string }) {
             }
             return <input {...props} />;
           },
-          h1: (p) => <h1 className="mt-3 mb-1.5 text-lg font-semibold text-slate-800" {...p} />,
-          h2: (p) => <h2 className="mt-3 mb-1.5 text-base font-semibold text-slate-800" {...p} />,
-          h3: (p) => <h3 className="mt-2.5 mb-1 text-sm font-semibold text-slate-800" {...p} />,
+          h1: (p) => <h1 className="mt-3 mb-1.5 text-lg font-semibold text-slate-800 dark:text-slate-100" {...p} />,
+          h2: (p) => <h2 className="mt-3 mb-1.5 text-base font-semibold text-slate-800 dark:text-slate-100" {...p} />,
+          h3: (p) => <h3 className="mt-2.5 mb-1 text-sm font-semibold text-slate-800 dark:text-slate-100" {...p} />,
           p: (p) => <p className="my-1.5" {...p} />,
           ul: (p) => <ul className="my-1.5 list-disc pl-5" {...p} />,
           ol: (p) => <ol className="my-1.5 list-decimal pl-5" {...p} />,
@@ -43,26 +43,26 @@ export function Markdown({ children }: { children: string }) {
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-700 underline underline-offset-2"
+              className="text-blue-700 underline underline-offset-2 dark:text-blue-400"
               {...p}
             />
           ),
           code: (p) => (
-            <code className="rounded bg-black/5 px-1 py-0.5 font-mono text-[12.5px]" {...p} />
+            <code className="rounded bg-black/5 px-1 py-0.5 font-mono text-[12.5px] dark:bg-white/10" {...p} />
           ),
           pre: (p) => (
-            <pre className="my-2 overflow-x-auto rounded bg-black/5 p-2.5 font-mono text-[12.5px]" {...p} />
+            <pre className="my-2 overflow-x-auto rounded bg-black/5 p-2.5 font-mono text-[12.5px] dark:bg-white/10" {...p} />
           ),
           blockquote: (p) => (
-            <blockquote className="my-2 border-l-2 border-slate-300 pl-3 text-slate-600" {...p} />
+            <blockquote className="my-2 border-l-2 border-slate-300 pl-3 text-slate-600 dark:border-slate-600 dark:text-slate-400" {...p} />
           ),
           table: (p) => (
             <div className="my-2 overflow-x-auto">
               <table className="w-full border-collapse text-[13px]" {...p} />
             </div>
           ),
-          th: (p) => <th className="border border-slate-300 px-2 py-1 text-left font-semibold" {...p} />,
-          td: (p) => <td className="border border-slate-200 px-2 py-1" {...p} />,
+          th: (p) => <th className="border border-slate-300 px-2 py-1 text-left font-semibold dark:border-slate-600" {...p} />,
+          td: (p) => <td className="border border-slate-200 px-2 py-1 dark:border-slate-700" {...p} />,
         }}
       >
         {children}

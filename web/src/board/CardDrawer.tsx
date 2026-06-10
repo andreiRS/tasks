@@ -165,18 +165,18 @@ function DrawerBody({
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-6 py-4">
+      <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-6 py-4 dark:border-slate-700">
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center rounded-full bg-black/10 px-1.5 py-0.5 font-mono text-[12px] font-semibold tracking-tight text-slate-700">
+          <span className="inline-flex items-center rounded-full bg-black/10 px-1.5 py-0.5 font-mono text-[12px] font-semibold tracking-tight text-slate-700 dark:bg-white/10 dark:text-slate-300">
             #{card.id}
           </span>
-          <span className="text-xs uppercase tracking-wide text-slate-400">{card.column}</span>
+          <span className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">{card.column}</span>
         </div>
         <button
           type="button"
           onClick={onClose}
           aria-label="close"
-          className="-mr-1 rounded px-1.5 text-slate-400 hover:text-slate-700"
+          className="-mr-1 rounded px-1.5 text-slate-400 hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-200"
         >
           ✕
         </button>
@@ -186,7 +186,7 @@ function DrawerBody({
         <form onSubmit={handleSave} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
           {/* Title */}
           <label className="flex flex-col gap-1">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">title</span>
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">title</span>
             <input
               value={title}
               onChange={(e) => {
@@ -195,7 +195,7 @@ function DrawerBody({
               }}
               aria-invalid={showTitleError}
               aria-describedby={showTitleError ? "card-title-error" : undefined}
-              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300 dark:focus:border-slate-500 dark:focus:ring-slate-600"
             />
             {showTitleError && (
               <span id="card-title-error" className="text-xs text-red-600">
@@ -206,21 +206,21 @@ function DrawerBody({
 
           {/* Body */}
           <label className="flex flex-col gap-1">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              body <span className="font-normal normal-case text-slate-400">(markdown)</span>
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              body <span className="font-normal normal-case text-slate-400 dark:text-slate-500">(markdown)</span>
             </span>
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value)}
               rows={10}
-              className="resize-y rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-[13px] outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300"
+              className="resize-y rounded-md border border-slate-300 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-900 font-mono text-[13px] outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-300 dark:focus:border-slate-500 dark:focus:ring-slate-600"
             />
           </label>
 
           {/* Effort picker */}
           <fieldset className="flex flex-col gap-1">
-            <legend className="text-xs font-semibold uppercase tracking-wide text-slate-500">effort</legend>
-            <div className="mt-1 inline-flex gap-1 self-start rounded-lg bg-slate-100 p-1">
+            <legend className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">effort</legend>
+            <div className="mt-1 inline-flex gap-1 self-start rounded-lg bg-slate-100 p-1 dark:bg-slate-900/60">
               {EFFORTS.map((e) => {
                 const selected = effort === e;
                 return (
@@ -231,8 +231,8 @@ function DrawerBody({
                     aria-pressed={selected}
                     className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm capitalize transition-colors ${
                       selected
-                        ? "bg-white font-semibold text-slate-800 shadow-sm"
-                        : "text-slate-500 hover:text-slate-700"
+                        ? "bg-white font-semibold text-slate-800 shadow-sm dark:bg-slate-700 dark:text-slate-100"
+                        : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                     }`}
                   >
                     <EffortBadge effort={e} />
@@ -246,10 +246,10 @@ function DrawerBody({
           {/* Attendance toggle — hand the task to agents (unattended) or keep it
               human-attended. */}
           <fieldset className="flex flex-col gap-1">
-            <legend className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <legend className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
               attendance
             </legend>
-            <div className="mt-1 inline-flex gap-1 self-start rounded-lg bg-slate-100 p-1">
+            <div className="mt-1 inline-flex gap-1 self-start rounded-lg bg-slate-100 p-1 dark:bg-slate-900/60">
               {(["attended", "unattended"] as Attendance[]).map((a) => {
                 const selected = attendance === a;
                 return (
@@ -260,8 +260,8 @@ function DrawerBody({
                     aria-pressed={selected}
                     className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors ${
                       selected
-                        ? "bg-white font-semibold text-slate-800 shadow-sm"
-                        : "text-slate-500 hover:text-slate-700"
+                        ? "bg-white font-semibold text-slate-800 shadow-sm dark:bg-slate-700 dark:text-slate-100"
+                        : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                     }`}
                   >
                     <span aria-hidden>{a === "unattended" ? "🤖" : "🙂"}</span>
@@ -277,14 +277,14 @@ function DrawerBody({
             <button
               type="button"
               onClick={() => setEditing(false)}
-              className="rounded-md px-3 py-1.5 text-sm text-slate-500 hover:text-slate-800"
+              className="rounded-md px-3 py-1.5 text-sm text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100"
             >
               cancel
             </button>
             <button
               type="submit"
               disabled={!titleValid}
-              className="rounded-md bg-slate-800 px-4 py-1.5 text-sm font-semibold text-amber-100 shadow-sm hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-md bg-slate-800 px-4 py-1.5 text-sm font-semibold text-amber-100 shadow-sm hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-700 dark:ring-1 dark:ring-white/10 dark:hover:bg-slate-600"
             >
               save
             </button>
@@ -293,20 +293,20 @@ function DrawerBody({
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
           <div className="flex items-start justify-between gap-3">
-            <h2 id="card-drawer-title" className="font-script text-2xl leading-snug text-slate-800">
+            <h2 id="card-drawer-title" className="font-script text-2xl leading-snug text-slate-800 dark:text-slate-100">
               {card.title}
             </h2>
             <button
               type="button"
               onClick={enterEdit}
-              className="shrink-0 rounded-md border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:border-slate-400 hover:bg-white"
+              className="shrink-0 rounded-md border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:border-slate-400 hover:bg-white dark:border-slate-600 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:bg-slate-700"
             >
               edit
             </button>
           </div>
 
           {/* Meta row: effort + attendance */}
-          <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600">
+          <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600 dark:text-slate-400">
             <span className="flex items-center gap-1.5">
               <EffortBadge effort={card.effort} />
               {card.effort} effort
@@ -320,37 +320,37 @@ function DrawerBody({
           {/* Deps — read-only, both directions. */}
           <div className="flex flex-col gap-2 text-sm">
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                 blocked by
               </span>
               {card.blockedBy.length > 0 ? (
-                <span className="font-mono text-slate-700">
+                <span className="font-mono text-slate-700 dark:text-slate-300">
                   {card.blockedBy.map((b) => `#${b}`).join(", ")}
                 </span>
               ) : (
-                <span className="text-slate-400">nothing</span>
+                <span className="text-slate-400 dark:text-slate-500">nothing</span>
               )}
             </div>
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                 blocks
               </span>
               {reverseDeps.length > 0 ? (
-                <span className="font-mono text-slate-700">
+                <span className="font-mono text-slate-700 dark:text-slate-300">
                   {reverseDeps.map((b) => `#${b}`).join(", ")}
                 </span>
               ) : (
-                <span className="text-slate-400">nothing</span>
+                <span className="text-slate-400 dark:text-slate-500">nothing</span>
               )}
             </div>
           </div>
 
           {/* Rendered-markdown body (GFM checklist, read-only). */}
-          <div className="border-t border-slate-200 pt-3">
+          <div className="border-t border-slate-200 pt-3 dark:border-slate-700">
             {card.body.trim() ? (
               <Markdown>{card.body}</Markdown>
             ) : (
-              <p className="text-sm italic text-slate-400">no description</p>
+              <p className="text-sm italic text-slate-400 dark:text-slate-500">no description</p>
             )}
           </div>
         </div>
