@@ -37,7 +37,13 @@ export async function startBoardServer(opts: ServeOptions): Promise<ReturnType<t
   // root, debounced and `.git`/lock-filtered, rebroadcasts the full board
   // snapshot to every connected SSE client. See src/serve/live.ts. We pass
   // `readSnapshot` so SSE frames are byte-identical to a GET /api/board read.
-  const { handleEvents } = createLiveSync(dir, readSnapshot);
+  // TASKS_SSE_HEARTBEAT_MS overrides the keep-alive cadence (test seam; a tiny
+  // value lets a test observe the heartbeat without waiting the 15s default).
+  const heartbeatMs = parseHeartbeatMs(process.env.TASKS_SSE_HEARTBEAT_MS);
+  const { handleEvents } =
+    heartbeatMs === undefined
+      ? createLiveSync(dir, readSnapshot)
+      : createLiveSync(dir, readSnapshot, heartbeatMs);
 
   // Asset-serving seam (issue #25, see src/serve/assets.ts): in the compiled
   // binary this is the embedded Vite SPA; in dev it is `null` (Vite dev server
@@ -47,12 +53,19 @@ export async function startBoardServer(opts: ServeOptions): Promise<ReturnType<t
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: opts.port,
-    fetch(req) {
+    fetch(req, server) {
       const url = new URL(req.url);
       if (req.method === "GET" && url.pathname === "/api/board") {
         return handleBoard(dir);
       }
       if (req.method === "GET" && url.pathname === "/api/events") {
+        // Disable Bun's idle timeout for THIS streaming request (default 10s):
+        // an SSE stream is quiet between board mutations, so the default would
+        // close it mid-response after 10s of no bytes — the real cause of the
+        // "live updates stop until refresh" stall (it killed direct AND proxied
+        // connections, not the Vite proxy as previously thought). Per-request so
+        // normal POST/GET handlers keep the 10s guard against a hung request.
+        server.timeout(req, 0);
         return handleEvents();
       }
       if (req.method === "POST" && url.pathname === "/api/tasks") {
@@ -84,6 +97,15 @@ export async function startBoardServer(opts: ServeOptions): Promise<ReturnType<t
 
   process.stdout.write(`tasks board listening on http://127.0.0.1:${server.port}\n`);
   return server;
+}
+
+/** Parse the TASKS_SSE_HEARTBEAT_MS override. Returns undefined (use the
+ *  built-in default) for an unset or non-numeric value; a finite >= 0 number is
+ *  honored verbatim (0 disables the heartbeat). */
+function parseHeartbeatMs(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
 /**

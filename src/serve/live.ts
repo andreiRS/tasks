@@ -4,6 +4,12 @@ import type { BoardSnapshot } from "./snapshot.ts";
 /** Trailing debounce window: coalesce the event burst one commit produces. */
 const WATCH_DEBOUNCE_MS = 75;
 
+/** Default keep-alive cadence. A `:`-comment on this interval keeps an idle SSE
+ *  connection warm so a buffering intermediary (the dev Vite proxy, a reverse
+ *  proxy) can't silently stall it: no frame for minutes reads as a dead pipe to
+ *  some proxies, which then drop it with no `error` the client can react to. */
+const HEARTBEAT_MS = 15000;
+
 /**
  * Decide whether an `fs.watch` event on the Store root is internal write
  * coordination churn that must NOT trigger a board rebroadcast.
@@ -45,14 +51,32 @@ export function isIgnoredWatchPath(filename: string | null): boolean {
 export function createLiveSync(
   dir: string,
   readSnapshot: (dir: string) => BoardSnapshot,
+  heartbeatMs: number = HEARTBEAT_MS,
 ): { handleEvents: () => Response } {
   const clients = new Set<ReadableStreamDefaultController>();
   const encoder = new TextEncoder();
+  const heartbeatFrame = encoder.encode(`: keep-alive\n\n`);
   let watcher: FSWatcher | null = null;
   let debounce: ReturnType<typeof setTimeout> | null = null;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
 
   function frameFor(snapshot: BoardSnapshot): Uint8Array {
     return encoder.encode(`data: ${JSON.stringify(snapshot)}\n\n`);
+  }
+
+  /** Write a keep-alive comment to every client. A `:`-prefixed line is an SSE
+   *  comment: the browser's EventSource ignores it (no `message` event), but it
+   *  is real bytes on the wire, which is exactly what keeps the connection from
+   *  going idle long enough for an intermediary to drop it. */
+  function pulse(): void {
+    for (const controller of clients) {
+      try {
+        controller.enqueue(heartbeatFrame);
+      } catch {
+        // Controller already closed: drop it (same guard as broadcast()).
+        clients.delete(controller);
+      }
+    }
   }
 
   function broadcast(): void {
@@ -88,12 +112,22 @@ export function createLiveSync(
   function ensureWatcher(): void {
     if (watcher !== null) return;
     watcher = watch(dir, { recursive: true }, onFsEvent);
+    // Heartbeat shares the watcher's lifecycle: lazily started on the first
+    // client, torn down with the watcher when the last one leaves. A
+    // heartbeatMs <= 0 disables it (lets a test opt out entirely).
+    if (heartbeatMs > 0 && heartbeat === null) {
+      heartbeat = setInterval(pulse, heartbeatMs);
+    }
   }
 
   function teardownWatcher(): void {
     if (debounce !== null) {
       clearTimeout(debounce);
       debounce = null;
+    }
+    if (heartbeat !== null) {
+      clearInterval(heartbeat);
+      heartbeat = null;
     }
     if (watcher !== null) {
       watcher.close();
