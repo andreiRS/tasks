@@ -6,7 +6,7 @@ import { Lane } from "./Lane";
 
 export function Board({ board }: { board: BoardSnapshot }) {
   return (
-    <div className="flex gap-6 overflow-x-auto px-6 pb-8 pt-2">
+    <div className="flex min-h-0 flex-1 gap-6 overflow-auto px-6 pb-8 pt-2">
       {board.columns.map((column) => (
         <Lane key={column} column={column} tasks={board.lanes[column] ?? []} />
       ))}

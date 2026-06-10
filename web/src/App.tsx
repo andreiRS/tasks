@@ -60,10 +60,10 @@ export function App() {
   }
 
   return (
-    <div className="flex min-h-screen bg-[#f4f1ea] text-slate-800">
+    <div className="flex h-screen overflow-hidden bg-[#f4f1ea] text-slate-800">
       <Rail />
 
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex items-baseline justify-between px-6 pt-5">
           <div className="flex items-baseline gap-3">
             <h1 className="font-script text-3xl text-slate-800">Tasks Board</h1>
