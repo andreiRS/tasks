@@ -1,9 +1,13 @@
-// A single post-it card face. Read-only for #18; #19 makes it draggable, #21
-// opens a modal on click. Keep the visual contract here (seeded paper + tilt,
+// A single post-it card face. #19 makes it draggable (dnd-kit useDraggable) and
+// applies the delay-gated pending look while its move is in flight. #21 will
+// open a modal on click. Keep the visual contract here (seeded paper + tilt,
 // short-id pill, handwritten title, body preview, effort dot, blocked badge,
 // attendance marker, "updated Xm ago").
 
+import { useDraggable } from "@dnd-kit/core";
+import { CSS } from "@dnd-kit/utilities";
 import type { BoardTask } from "./types";
+import { useBoardStore } from "../store";
 import { seededStyle } from "./seed";
 import { EFFORT_DOT } from "./effort";
 import { timeAgo } from "./time";
@@ -14,14 +18,32 @@ export function Card({ task }: { task: BoardTask }) {
   const isBlocked = task.blockedBy.length > 0;
   const isAgent = task.attendance === "unattended";
 
+  // Pending look only once the 200ms delay gate has fired (slow writes only).
+  const showPending = useBoardStore((s) => s.pending[task.uuid]?.showPending ?? false);
+
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: task.uuid,
+    // Carry the full task so onDragEnd can dispatch the move without a lookup.
+    data: { task },
+  });
+
   return (
     <article
-      className="relative rounded-[3px] px-3.5 pt-3 pb-2.5 text-slate-800 shadow-[2px_3px_6px_rgba(0,0,0,0.18)] transition-transform duration-150 hover:-translate-y-0.5 hover:rotate-0"
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className="relative cursor-grab touch-none rounded-[3px] px-3.5 pt-3 pb-2.5 text-slate-800 shadow-[2px_3px_6px_rgba(0,0,0,0.18)] transition-transform duration-150 hover:-translate-y-0.5 hover:rotate-0 active:cursor-grabbing"
       style={{
         backgroundColor: bg,
         // The darker edge sells the layered-paper look.
         borderBottom: `2px solid ${edge}`,
-        transform: `rotate(${tilt}deg)`,
+        // Live drag translate composes with the resting tilt.
+        transform: transform
+          ? `${CSS.Translate.toString(transform)} rotate(${tilt}deg)`
+          : `rotate(${tilt}deg)`,
+        // Pending = subtle fade only. No border/size change so the card never jumps.
+        opacity: showPending ? 0.6 : 1,
+        zIndex: isDragging ? 50 : undefined,
       }}
     >
       {/* Effort dot — top-right corner */}
@@ -31,6 +53,17 @@ export function Card({ task }: { task: BoardTask }) {
         title={effort.label}
         aria-label={effort.label}
       />
+
+      {/* Pending clock badge — tiny bottom-right corner element, no layout shift */}
+      {showPending && (
+        <span
+          className="pointer-events-none absolute bottom-1.5 right-1.5 text-[13px] leading-none text-slate-500/80"
+          title="saving…"
+          aria-label="saving"
+        >
+          ◷
+        </span>
+      )}
 
       {/* Header: short-id pill + attendance marker */}
       <div className="mb-1.5 flex items-center gap-1.5 pr-4">
