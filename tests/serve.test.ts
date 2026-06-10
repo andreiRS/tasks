@@ -1354,20 +1354,54 @@ test("contentTypeFor maps the common built-asset extensions", () => {
   expect(contentTypeFor("/thing.bin")).toBe("application/octet-stream");
 });
 
-test("without built assets (dev): unknown non-/api route 404s and /api still works", async () => {
+test("dev with a locally-built web/dist: GET / serves the SPA shell (no TASKS_WEB_DIST)", async () => {
+  // Running from source with web/dist built and NO explicit TASKS_WEB_DIST: the
+  // server auto-loads the source-relative web/dist so `tasks serve` shows the
+  // real board (the linked-CLI case that previously 404'd at /).
+  await ensureWebDist();
   const storeDir = deriveStorePath(tasksHome, cwdDir);
   await initBareStore(storeDir);
   await commitStore(storeDir);
 
-  // No TASKS_WEB_DIST and running from source => no embedded assets (dev mode).
   const srv = await startServe();
   try {
+    const res = await fetch(`${srv.baseUrl}/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type") ?? "").toContain("text/html");
+    expect(await res.text()).toContain('<div id="root"></div>');
+  } finally {
+    srv.stop();
+  }
+});
+
+test("dev with NO built assets: GET / serves a guided HTML page (not JSON 404), /api still works, boot warns on stderr", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  await commitStore(storeDir);
+
+  // Point TASKS_WEB_DIST at an empty dir: an explicit override that doesn't
+  // resolve forces the asset-less path (default web/dist is NOT consulted), so
+  // this exercises the fallback regardless of whether the repo has a build.
+  const emptyDist = mkdtempSync(join(tmpdir(), "tasks-empty-dist-"));
+  const srv = await startServe([], { TASKS_WEB_DIST: emptyDist });
+  try {
     const root = await fetch(`${srv.baseUrl}/`);
-    expect(root.status).toBe(404);
+    expect(root.status).toBe(200);
+    expect(root.headers.get("content-type") ?? "").toContain("text/html");
+    const html = await root.text();
+    // It's the guidance page, not the SPA shell, and it points at the build path.
+    expect(html).not.toContain('<div id="root"></div>');
+    expect(html).toContain("build:web");
 
     const api = await fetch(`${srv.baseUrl}/api/board`);
     expect(api.status).toBe(200);
+
+    // The boot warning lands on stderr so it never corrupts the stdout URL line.
+    srv.stop();
+    const stderr = await new Response(srv.proc.stderr as ReadableStream<Uint8Array>).text();
+    expect(stderr).toContain("build:web");
   } finally {
     srv.stop();
+    rmSync(emptyDist, { recursive: true, force: true });
   }
 });

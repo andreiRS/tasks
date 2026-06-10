@@ -31,6 +31,15 @@ versions; breaking changes will be called out explicitly here.
   `--body-file -` instead. The three body sources (`--body`, `--body-file`,
   `--edit`) are mutually exclusive (`CONFLICT`).
 
+### Fixed
+
+- `tasks serve` now shows the board UI when run from source. A linked or
+  source-run `tasks serve` auto-serves a locally-built `web/dist` (after a
+  one-time `bun run build:web`), instead of only serving the API and returning a
+  bare JSON `NOT_FOUND` at `/`. When no UI is built at all, `serve` prints a
+  one-line warning on stderr and serves a short guidance page at `/` explaining
+  how to enable the board, rather than a raw error.
+
 ## [0.1.0] - 2026-05-29
 
 First versioned release. `tasks` is a single-binary CLI for managing
