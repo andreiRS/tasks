@@ -472,8 +472,9 @@ export async function editTask(
     }
 
     // Validate the graph across all on-disk tasks (the editor's content is
-    // already on disk). On failure, leave the bad file in place; do not commit.
-    validateGraph(findAllTasks(dir));
+    // already on disk). Archived tasks count as resolvable terminal deps.
+    // On failure, leave the bad file in place; do not commit.
+    validateGraph(findAllTasks(dir), findArchivedTasks(dir).map((t) => t.uuid));
 
     // Persist through the write primitive: bump updated_at, rename on a
     // slug-changing title edit, and commit exactly what's staged for this task
@@ -569,7 +570,7 @@ export async function linkTask(
     const mutatedTasks = allTasks.map((t) =>
       t.uuid === subject.uuid ? { ...t, deps: updatedDeps } : t
     );
-    validateGraph(mutatedTasks);
+    validateGraph(mutatedTasks, findArchivedTasks(dir).map((t) => t.uuid));
 
     // Find the subject file on disk and rewrite its deps via the Document API.
     const tf = loadTaskFile(dir, subject.uuid);
@@ -657,7 +658,7 @@ export async function unlinkTask(
     const mutatedTasks = allTasks.map((t) =>
       t.uuid === subject.uuid ? { ...t, deps: updatedDeps } : t
     );
-    validateGraph(mutatedTasks);
+    validateGraph(mutatedTasks, findArchivedTasks(dir).map((t) => t.uuid));
 
     // Find the subject file on disk and rewrite its deps via the Document API.
     const tf = loadTaskFile(dir, subject.uuid);
