@@ -65,23 +65,23 @@ export function App() {
 
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-baseline justify-between px-6 pt-5">
-          <h1 className="font-script text-3xl text-slate-800">board</h1>
           <div className="flex items-baseline gap-3">
-            {status === "ready" && (
-              <button
-                type="button"
-                onClick={() => setShowNewTask(true)}
-                className="self-center rounded-md bg-slate-800 px-3 py-1.5 text-sm font-semibold text-amber-100 shadow-sm hover:bg-slate-700"
-              >
-                + new task
-              </button>
-            )}
+            <h1 className="font-script text-3xl text-slate-800">board</h1>
             {board?.head && (
               <span className="text-xs text-slate-400">
-                board {timeAgo(board.head.committed_at)}
+                updated {timeAgo(board.head.committed_at)}
               </span>
             )}
           </div>
+          {status === "ready" && (
+            <button
+              type="button"
+              onClick={() => setShowNewTask(true)}
+              className="self-center rounded-md bg-slate-800 px-3 py-1.5 text-sm font-semibold text-amber-100 shadow-sm hover:bg-slate-700"
+            >
+              + new task
+            </button>
+          )}
         </header>
 
         {/* Subtle, non-destructive hint: an established stream dropped and is
