@@ -27,7 +27,7 @@ The per-Store YAML file that holds Store-wide state, currently just `next_id` fo
 _Avoid_: config, manifest, store.yaml.
 
 **Column**:
-One of the six fixed status buckets: `backlog`, `ready`, `doing`, `blocked`, `review`, `done`. A Task's Column is encoded by the directory the file lives in. Moving Columns is a Transition (a `git mv`). The Archive directory is **not** a Column.
+One of the six fixed status buckets: `backlog`, `ready`, `doing`, `blocked`, `review`, `done`. A Task's Column is encoded by the directory the file lives in. Moving Columns is a Transition (a `git mv`). The Archive directory is **not** a Column. The `blocked` Column is a place a caller deliberately moves a Task to; it is **not** the same as having an Unresolved Blocker, which is derived from `deps` and can hold in any Column (see **Unresolved Blocker**).
 _Avoid_: status, state, lane, stage.
 
 **Archive**:
@@ -58,7 +58,7 @@ A Dependency is satisfied only when the depended-on Task is in `done`. `review` 
 _Avoid_: finished, closed, resolved.
 
 **Unresolved Blocker**:
-A declared Dependency whose depended-on Task is not yet in `done`. A Task has unresolved blockers when at least one entry in its `deps` list points to a Task in any Column other than `done`. The `list` and `board` commands surface unresolved blockers as a `[blocked by #N,#M]` marker; `tasks next` hard-filters them out.
+A declared Dependency whose depended-on Task is not yet in `done`. A Task has unresolved blockers when at least one entry in its `deps` list points to a Task in any Column other than `done`. This is **orthogonal to the `blocked` Column**: a Task in `ready` or `doing` can have unresolved blockers, and a Task sitting in the `blocked` Column need not have any deps at all. The `list` and `board` commands surface unresolved blockers as a `[blocked by #N,#M]` marker, and `serve` surfaces the same fact regardless of the Column the Task occupies; `tasks next` hard-filters them out.
 _Avoid_: open blocker, active dep, incomplete dep.
 
 **Short ID**:
