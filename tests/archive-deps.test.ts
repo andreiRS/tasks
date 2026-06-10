@@ -84,6 +84,35 @@ test("tasks show: renders an archived dep as #id title (not <unknown>)", async (
   expect(show.stdout).not.toContain("<unknown>");
 });
 
+test("tasks archive: archiving a still-depended-on done task succeeds and preserves the edge", async () => {
+  // Decision: archive has no DEP_EXISTS guard (unlike rm). A live task may
+  // legitimately depend on archived (= Complete) work, so archiving a target
+  // that something still depends on must just work and keep the edge intact.
+  const blockerId = await newId("the done blocker");
+  await runTasks(["mv", String(blockerId), "done"]);
+  const dependentId = await newId("still waiting");
+  await runTasks(["link", String(dependentId), "--depends-on", String(blockerId)]);
+
+  const arch = await runTasks(["archive", String(blockerId)]);
+  expect(arch.exitCode).toBe(0);
+  expect(arch.stderr).toBe("");
+
+  // The edge is preserved (not stripped) and still resolves to the archived task.
+  const show = await runTasks(["show", String(dependentId), "--json"]);
+  const data = JSON.parse(show.stdout) as { deps: string[] };
+  expect(data.deps.length).toBe(1);
+
+  // The archived dep counts as Complete, so the dependent is not blocked.
+  const list = await runTasks(["list", "--json"]);
+  const row = (JSON.parse(list.stdout) as { id: number; blockedBy: number[] }[])
+    .find((r) => r.id === dependentId);
+  expect(row?.blockedBy).toEqual([]);
+
+  // And the graph stays mutable afterwards.
+  const setOk = await runTasks(["set", String(dependentId), "--effort", "high"]);
+  expect(setOk.exitCode).toBe(0);
+});
+
 test("tasks link: a new edge succeeds even when the subject already depends on an archived task", async () => {
   // Repro of the validator catch-22: link D -> B (B in done), archive B, then
   // any later graph mutation rebuilt the DAG from LIVE tasks only and threw
