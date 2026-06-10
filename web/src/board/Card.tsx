@@ -17,7 +17,7 @@ export function Card({ task }: { task: BoardTask }) {
   // renders a muted "#…" pill instead of a real id and isn't draggable until the
   // snapshot replaces it with the real card.
   const isPlaceholder = task.id < 0;
-  const { bg, edge, tilt } = seededStyle(isPlaceholder ? 0 : task.id);
+  const { slot, tilt } = seededStyle(isPlaceholder ? 0 : task.id);
   const isBlocked = task.blockedBy.length > 0;
   const isAgent = task.attendance === "unattended";
 
@@ -50,6 +50,9 @@ export function Card({ task }: { task: BoardTask }) {
   return (
     <article
       ref={setNodeRef}
+      // Per-id paper-color slot; CSS (`[data-paper=N]`) supplies the light/dark
+      // --card-bg / --card-edge the inline style below reads.
+      data-paper={slot}
       {...listeners}
       {...attributes}
       // A plain click (under the 8px PointerSensor activation distance set in
@@ -63,15 +66,15 @@ export function Card({ task }: { task: BoardTask }) {
       // on every pointermove, and a transition-transform would animate each of
       // those over 150ms, so the card chases the pointer a frame behind (laggy
       // drag). Keep the transition only at rest for the hover lift.
-      className={`relative touch-none rounded-[3px] px-3.5 pt-3 pb-2.5 text-slate-800 shadow-[2px_3px_6px_rgba(0,0,0,0.18)] hover:-translate-y-0.5 hover:rotate-0 ${
+      className={`relative touch-none rounded-[3px] px-3.5 pt-3 pb-2.5 text-slate-800 shadow-[2px_3px_6px_rgba(0,0,0,0.18)] hover:-translate-y-0.5 hover:rotate-0 dark:text-slate-100 dark:shadow-[2px_3px_8px_rgba(0,0,0,0.45)] ${
         isDragging ? "" : "transition-transform duration-150"
       } ${
         isPlaceholder ? "cursor-default" : "cursor-grab active:cursor-grabbing"
       }`}
       style={{
-        backgroundColor: bg,
+        backgroundColor: "var(--card-bg)",
         // The darker edge sells the layered-paper look.
-        borderBottom: `2px solid ${edge}`,
+        borderBottom: "2px solid var(--card-edge)",
         // Live drag translate composes with the resting tilt.
         transform: transform
           ? `${CSS.Translate.toString(transform)} rotate(${tilt}deg)`
@@ -92,7 +95,7 @@ export function Card({ task }: { task: BoardTask }) {
       {/* Pending clock badge — tiny bottom-right corner element, no layout shift */}
       {showPending && (
         <span
-          className="pointer-events-none absolute bottom-1.5 right-1.5 text-[13px] leading-none text-slate-500/80"
+          className="pointer-events-none absolute bottom-1.5 right-1.5 text-[13px] leading-none text-slate-500/80 dark:text-slate-300/80"
           title="saving…"
           aria-label="saving"
         >
@@ -105,14 +108,14 @@ export function Card({ task }: { task: BoardTask }) {
       <div className="mb-1.5 flex items-center gap-1.5 pr-4">
         {isPlaceholder ? (
           <span
-            className="inline-flex items-center rounded-full bg-black/5 px-1.5 py-0.5 font-mono text-[11px] font-semibold tracking-tight text-slate-400"
+            className="inline-flex items-center rounded-full bg-black/5 px-1.5 py-0.5 font-mono text-[11px] font-semibold tracking-tight text-slate-400 dark:bg-white/10 dark:text-slate-400"
             title="saving — id assigned on save"
             aria-label="pending id"
           >
             #…
           </span>
         ) : (
-          <span className="inline-flex items-center rounded-full bg-black/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold tracking-tight text-slate-700">
+          <span className="inline-flex items-center rounded-full bg-black/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold tracking-tight text-slate-700 dark:bg-white/15 dark:text-slate-200">
             #{task.id}
           </span>
         )}
@@ -131,7 +134,7 @@ export function Card({ task }: { task: BoardTask }) {
             }}
             title="Archive (clear off the board)"
             aria-label={`Archive task #${task.id}`}
-            className="inline-flex items-center rounded-[2px] bg-black/5 px-2 py-0.5 text-[11px] font-medium text-slate-500 ring-1 ring-black/15 transition hover:bg-slate-700 hover:text-white"
+            className="inline-flex items-center rounded-[2px] bg-black/5 px-2 py-0.5 text-[11px] font-medium text-slate-500 ring-1 ring-black/15 transition hover:bg-slate-700 hover:text-white dark:bg-white/10 dark:text-slate-300 dark:ring-white/20 dark:hover:bg-slate-200 dark:hover:text-slate-900"
           >
             Archive
           </button>
@@ -145,7 +148,7 @@ export function Card({ task }: { task: BoardTask }) {
 
       {/* ~2-line body preview */}
       {task.body.trim() && (
-        <p className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-slate-600/90">
+        <p className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-slate-600/90 dark:text-slate-300/90">
           {task.body}
         </p>
       )}
@@ -162,16 +165,16 @@ export function Card({ task }: { task: BoardTask }) {
           in the bottom-right "assignee" slot (Jira-style): a small circle with
           H (human/attended) or A (agent/unattended). Hidden while the pending ◷
           badge owns that corner, so the two never overlap. */}
-      <div className="mt-2 flex items-center justify-between border-t border-dashed border-black/15 pt-2">
-        <span className="text-[11px] italic text-slate-500">
+      <div className="mt-2 flex items-center justify-between border-t border-dashed border-black/15 pt-2 dark:border-white/20">
+        <span className="text-[11px] italic text-slate-500 dark:text-slate-400">
           updated {timeAgo(task.updated_at)}
         </span>
         {!showPending && (
           <span
             className={`flex size-6 items-center justify-center rounded-full text-[10px] font-semibold ring-1 ${
               isAgent
-                ? "bg-violet-100/70 text-violet-700 ring-violet-400/50"
-                : "bg-slate-200/70 text-slate-600 ring-black/15"
+                ? "bg-violet-100/70 text-violet-700 ring-violet-400/50 dark:bg-violet-400/20 dark:text-violet-200 dark:ring-violet-300/40"
+                : "bg-slate-200/70 text-slate-600 ring-black/15 dark:bg-white/10 dark:text-slate-300 dark:ring-white/20"
             }`}
             title={isAgent ? "agent (unattended)" : "human (attended)"}
             aria-label={isAgent ? "agent task" : "attended task"}

@@ -1,19 +1,16 @@
 // Deterministic per-task visuals, seeded from the task id.
 //
-// The same id always yields the same paper color + tilt, stable across reloads
-// (no randomness, no time/order input). A small integer hash of the id selects
-// a palette slot and a tilt bucket.
+// The same id always yields the same paper color slot + tilt, stable across
+// reloads (no randomness, no time/order input). A small integer hash of the id
+// selects a palette slot and a tilt bucket.
+//
+// The actual paper COLORS live in index.css, keyed by `[data-paper="<slot>"]`,
+// so light and dark sticky-note tones are a pure CSS swap (the card reads
+// `var(--card-bg)` / `var(--card-edge)`). This module only decides which slot
+// and tilt a task gets — it carries no hex.
 
-/** A warm-paper palette for sticky notes (background + a slightly darker edge). */
-export const PAPER_COLORS: ReadonlyArray<{ bg: string; edge: string }> = [
-  { bg: "#fff7c0", edge: "#f2e58c" }, // butter yellow
-  { bg: "#ffe0b3", edge: "#f5cd8f" }, // peach
-  { bg: "#d8f5c8", edge: "#bfe7a8" }, // mint
-  { bg: "#cfe9ff", edge: "#aed6f5" }, // sky
-  { bg: "#ffd6e0", edge: "#f5b8c7" }, // rose
-  { bg: "#e6d8ff", edge: "#cfbaf0" }, // lilac
-  { bg: "#fef0d0", edge: "#f0dcae" }, // cream
-];
+/** Number of paper-color slots (must match the `[data-paper=N]` rules in CSS). */
+export const PAPER_SLOTS = 7;
 
 /** Tilt buckets in degrees — a few degrees either side, never zero so every card looks placed by hand. */
 const TILTS: readonly number[] = [-2.5, -1.5, -1, 1, 1.5, 2.5];
@@ -33,17 +30,17 @@ export function hashId(id: number): number {
 }
 
 export interface Seeded {
-  bg: string;
-  edge: string;
+  /** Paper-color slot index in [0, PAPER_SLOTS). Drives the `data-paper` attr. */
+  slot: number;
   /** rotation in degrees */
   tilt: number;
 }
 
-/** Derive paper color + tilt for a task, deterministically from its id. */
+/** Derive paper-color slot + tilt for a task, deterministically from its id. */
 export function seededStyle(id: number): Seeded {
   const h = hashId(id);
-  const color = PAPER_COLORS[h % PAPER_COLORS.length];
+  const slot = h % PAPER_SLOTS;
   // Use a different slice of the hash for tilt so color and tilt don't correlate.
-  const tilt = TILTS[Math.floor(h / PAPER_COLORS.length) % TILTS.length];
-  return { bg: color.bg, edge: color.edge, tilt };
+  const tilt = TILTS[Math.floor(h / PAPER_SLOTS) % TILTS.length];
+  return { slot, tilt };
 }

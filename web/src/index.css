@@ -48,6 +48,36 @@
   }
 }
 
+/* Sticky-note paper colors, keyed by the per-id slot (seed.ts → `data-paper`).
+   Each slot carries both a light pastel (`*-l`) and a hue-matched deep+muted
+   dark tone (`*-d`), and defaults `--card-bg`/`--card-edge` to the light pair.
+   The two rules below flip those to the dark pair on the same condition as the
+   rest of dark mode — explicit dark, or system+OS-dark — so dark sticky notes
+   still read as distinct colors without glaring on a dark board (card text
+   flips to light alongside, via dark: utilities in Card.tsx). */
+[data-paper="0"] { --card-bg-l: #fff7c0; --card-edge-l: #f2e58c; --card-bg-d: #423b16; --card-edge-d: #534a1e; } /* butter */
+[data-paper="1"] { --card-bg-l: #ffe0b3; --card-edge-l: #f5cd8f; --card-bg-d: #432f1c; --card-edge-d: #543a24; } /* peach  */
+[data-paper="2"] { --card-bg-l: #d8f5c8; --card-edge-l: #bfe7a8; --card-bg-d: #1e3a26; --card-edge-d: #274a31; } /* mint   */
+[data-paper="3"] { --card-bg-l: #cfe9ff; --card-edge-l: #aed6f5; --card-bg-d: #1c3344; --card-edge-d: #244254; } /* sky    */
+[data-paper="4"] { --card-bg-l: #ffd6e0; --card-edge-l: #f5b8c7; --card-bg-d: #43222e; --card-edge-d: #532a3a; } /* rose   */
+[data-paper="5"] { --card-bg-l: #e6d8ff; --card-edge-l: #cfbaf0; --card-bg-d: #322a45; --card-edge-d: #3f3457; } /* lilac  */
+[data-paper="6"] { --card-bg-l: #fef0d0; --card-edge-l: #f0dcae; --card-bg-d: #3c3520; --card-edge-d: #4a4228; } /* cream  */
+
+[data-paper] {
+  --card-bg: var(--card-bg-l);
+  --card-edge: var(--card-edge-l);
+}
+[data-theme="dark"] [data-paper] {
+  --card-bg: var(--card-bg-d);
+  --card-edge: var(--card-edge-d);
+}
+@media (prefers-color-scheme: dark) {
+  [data-theme="system"] [data-paper] {
+    --card-bg: var(--card-bg-d);
+    --card-edge: var(--card-edge-d);
+  }
+}
+
 html,
 body,
 #root {
