@@ -171,15 +171,15 @@ export function Card({ task }: { task: BoardTask }) {
         </span>
         {!showPending && (
           <span
-            className={`flex size-6 items-center justify-center rounded-full text-[10px] font-semibold ring-1 ${
+            className={`flex size-6 items-center justify-center rounded-full text-[14px] leading-none ring-1 ${
               isAgent
-                ? "bg-violet-100/70 text-violet-700 ring-violet-400/50 dark:bg-violet-400/20 dark:text-violet-200 dark:ring-violet-300/40"
-                : "bg-slate-200/70 text-slate-600 ring-black/15 dark:bg-white/10 dark:text-slate-300 dark:ring-white/20"
+                ? "bg-violet-100/70 ring-violet-400/50 dark:bg-violet-400/20 dark:ring-violet-300/40"
+                : "bg-slate-200/70 ring-black/15 dark:bg-white/10 dark:ring-white/20"
             }`}
             title={isAgent ? "agent (unattended)" : "human (attended)"}
             aria-label={isAgent ? "agent task" : "attended task"}
           >
-            {isAgent ? "A" : "H"}
+            <span aria-hidden>{isAgent ? "🤖" : "🙂"}</span>
           </span>
         )}
       </div>
