@@ -7,3 +7,4 @@
 - External binary dependencies are `git` (assumed present) and `flock` (see ADR-0013).
 - `engines` is omitted from `package.json` (Bun-only, ships a compiled binary, so a Node version range would mislead); types come from `@types/bun`; tsconfig baseline is `module: esnext`, `moduleResolution: bundler`, `target: esnext`, `strict: true`.
 - The binary name `tasks` risks colliding with other tools on `$PATH`; verify before any wider distribution.
+- Later qualified by ADR-0016 for the `serve` subsystem: the visual board's frontend toolchain (React, Vite, dnd-kit, a markdown renderer) is a deliberately larger dependency set, scoped to `serve` and its build output and kept out of the core CLI paths.

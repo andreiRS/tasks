@@ -51,6 +51,10 @@ test("two concurrent `tasks new` invocations serialize and produce distinct ids"
 
   // Now fire two `tasks new` in parallel.
   const [a, b] = await Promise.all([runNew("alpha"), runNew("bravo")]);
+  // Surface the child's stderr/stdout so a failure under load is diagnosable
+  // instead of a bare exit-code mismatch.
+  if (a.exit !== 0) console.error(`[concurrency] alpha exit=${a.exit}\nstdout:${a.stdout}\nstderr:${a.stderr}`);
+  if (b.exit !== 0) console.error(`[concurrency] bravo exit=${b.exit}\nstdout:${b.stdout}\nstderr:${b.stderr}`);
   expect(a.exit).toBe(0);
   expect(b.exit).toBe(0);
 

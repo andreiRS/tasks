@@ -10,7 +10,10 @@
     "tasks": "bun run src/cli.ts",
     "test": "bun test --parallel --timeout 30000",
     "test:serial": "bun test",
-    "build": "bun build --compile --target=bun ./src/cli.ts --outfile=dist/tasks"
+    "build": "bun build --compile --target=bun ./src/cli.ts --outfile=dist/tasks",
+    "build:web": "cd web && bun install && bun run build",
+    "gen:web-assets": "bun run scripts/gen-web-assets.ts",
+    "build:binary": "bun run build:web && bun run gen:web-assets && bun build --compile --target=bun ./src/cli.ts --outfile=dist/tasks"
   },
   "dependencies": {
     "ink": "^7.0.4",

@@ -42,6 +42,8 @@ Commands:
   summary --json [--recent <N>] [--stale <Nd>]
                           Compact Store digest: per-column counts, recent tasks,
                           and stale tasks in doing/blocked/review.
+  serve [--port <n>] [--open]
+                          Start a localhost web board for this project's Store.
   help                    Show this message.
   version                 Print the CLI version.
 

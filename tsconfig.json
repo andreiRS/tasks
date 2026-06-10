@@ -14,5 +14,11 @@
     "noEmit": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["src/**/*", "tests/**/*"]
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": [
+    "web",
+    "node_modules",
+    "dist",
+    "src/serve/web-assets.generated.ts"
+  ]
 }

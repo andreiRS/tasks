@@ -84,7 +84,7 @@ export interface CreateTaskOptions {
  * Returns the short id of the new task.
  */
 export async function createTask(dir: string, title: string, opts: CreateTaskOptions = {}): Promise<number> {
-  return withTransaction(dir, { requireValidEnums: true }, async () => {
+  return withTransaction(dir, { requireClean: true, requireValidEnums: true }, async () => {
     // Read or initialize meta.yaml
     const metaPath = join(dir, "meta.yaml");
     let nextId = 1;
@@ -681,6 +681,13 @@ export interface SetTaskOptions {
   title?: string;
   attendance?: "attended" | "unattended";
   effort?: "low" | "medium" | "high";
+  /**
+   * Replace the task body (the markdown after the frontmatter) from a string.
+   * The only programmatic body-edit path — `editTask` is `$EDITOR`-only.
+   * Written via `TaskFile.setBody`, which matches the create/parse convention
+   * so the value round-trips through `parseTaskFile`/the board snapshot.
+   */
+  body?: string;
 }
 
 /**
@@ -746,6 +753,10 @@ export async function setTask(
     if (opts.effort !== undefined) {
       tf.set("effort", opts.effort);
       changed.push("effort");
+    }
+    if (opts.body !== undefined) {
+      tf.setBody(opts.body);
+      changed.push("body");
     }
 
     await commitTaskChange(tf, `task: set #${id} ${changed.join(", ")}`);

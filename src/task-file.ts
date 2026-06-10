@@ -22,19 +22,35 @@ export function slugify(title: string): string {
  * Body is everything after the closing `---` line, with exactly one leading
  * newline stripped (so a freshly created task with `---\n` at the end yields "").
  */
+/**
+ * Split raw file content into its frontmatter YAML and verbatim body. The file
+ * shape is `---\n<frontmatter>\n---<body>`: only the FIRST `---` block is treated
+ * as delimiters. The body is everything after the second `---` line, preserved
+ * byte-for-byte (any `---` lines inside the body are NOT delimiters). Returns
+ * null when the leading frontmatter block is absent or unterminated.
+ */
+function splitFrontmatter(content: string): { fmText: string; rawBody: string } | null {
+  // The frontmatter end-delimiter: a line that is exactly `---` (optional
+  // trailing spaces), the FIRST such line at or after the opening delimiter.
+  // The delimiter line is terminated by a newline OR end-of-file (a closing
+  // `---` with no trailing newline, e.g. a task with an empty body).
+  const m = content.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
+  // m must start at offset 0 so the opening `---` is the very first line.
+  if (!m || m.index !== 0) return null;
+  const fmText = m[1]!;
+  // Body is everything after the matched delimiter line (including its newline),
+  // preserved verbatim — no further splitting on `---`.
+  const rawBody = content.slice(m[0].length);
+  return { fmText, rawBody };
+}
+
 export function parseTaskFile(content: string): { fm: Record<string, unknown>; body: string } {
-  // Split on the second `---` delimiter
-  const parts = content.split(/^---\s*$/m);
-  // parts[0] is empty (before the first ---), parts[1] is frontmatter, parts[2+] is body
-  if (parts.length < 3) {
+  const split = splitFrontmatter(content);
+  if (!split) {
     return { fm: {}, body: "" };
   }
-  const fm = yamlParse(parts[1]) as Record<string, unknown>;
-  // Join remaining parts (in case body itself contained ---)
-  const rawBody = parts.slice(2).join("---");
-  // Strip exactly one leading newline
-  const body = rawBody.startsWith("\n") ? rawBody.slice(1) : rawBody;
-  return { fm, body };
+  const fm = yamlParse(split.fmText) as Record<string, unknown>;
+  return { fm, body: split.rawBody };
 }
 
 /**
@@ -52,7 +68,7 @@ class TaskFile {
   column: string;
   private readonly doc: Document;
   /** Everything after the closing `---` delimiter, preserved verbatim. */
-  private readonly bodyRaw: string;
+  private bodyRaw: string;
   private titleChanged = false;
 
   constructor(dir: string, column: string, filename: string, doc: Document, bodyRaw: string) {
@@ -83,6 +99,15 @@ class TaskFile {
     if (key === "title") this.titleChanged = true;
   }
 
+  /**
+   * Replace the task body from a plain string. Stores it with the same
+   * `\n${body}` convention `newTaskFile` uses, so `parseTaskFile` (which strips
+   * exactly one leading newline) round-trips the value unchanged.
+   */
+  setBody(body: string): void {
+    this.bodyRaw = `\n${body}`;
+  }
+
   /** The on-disk filename this task should have given its current title. */
   targetFilename(): string {
     if (!this.titleChanged) return this.origFilename;
@@ -104,9 +129,11 @@ class TaskFile {
 /** Read the file at `column/filename` into a TaskFile handle (no resolution). */
 function readTaskFileAt(dir: string, column: string, filename: string): TaskFile {
   const raw = readFileSync(join(dir, column, filename), "utf-8");
-  const parts = raw.split(/^---\s*$/m);
-  const doc = parseDocument(parts[1] ?? "");
-  const bodyRaw = parts.slice(2).join("---");
+  const split = splitFrontmatter(raw);
+  const doc = parseDocument(split?.fmText ?? "");
+  // Re-attach the leading-newline convention so serialize() round-trips: the
+  // body stored on the handle is `\n${visibleBody}`, matching `newTaskFile`.
+  const bodyRaw = split ? `\n${split.rawBody}` : "";
   return new TaskFile(dir, column, filename, doc, bodyRaw);
 }
 
@@ -166,9 +193,9 @@ export function loadTaskFileAt(dir: string, task: TaskData): TaskFile | null {
   if (!existsSync(colDir)) return null;
   for (const f of readdirSync(colDir).filter((n) => n.endsWith(".md"))) {
     const raw = readFileSync(join(colDir, f), "utf-8");
-    const parts = raw.split(/^---\s*$/m);
-    if (parts.length < 3) continue;
-    const fm = yamlParse(parts[1]) as Record<string, unknown>;
+    const split = splitFrontmatter(raw);
+    if (!split) continue;
+    const fm = yamlParse(split.fmText) as Record<string, unknown>;
     if (fm.uuid === task.uuid) {
       return readTaskFileAt(dir, task.column, f);
     }
@@ -227,9 +254,9 @@ export function findTaskFilename(
     }
     for (const f of files) {
       const raw = readFileSync(join(colDir, f), "utf-8");
-      const parts = raw.split(/^---\s*$/m);
-      if (parts.length < 3) continue;
-      const fm = yamlParse(parts[1]) as Record<string, unknown>;
+      const split = splitFrontmatter(raw);
+      if (!split) continue;
+      const fm = yamlParse(split.fmText) as Record<string, unknown>;
       const matches = byShortId ? fm.id === targetId : fm.uuid === idOrUuid;
       if (matches) return { column: col, filename: f };
     }
