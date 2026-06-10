@@ -532,8 +532,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     if (task.column === toColumn) return; // drop on own lane = no-op, no POST.
     // A card with an in-flight move can't be dragged again until it resolves:
     // a second move would overwrite pending (with a now-wrong fromColumn) and
-    // orphan the first request. Ignore the drag until the pending write lands.
-    if (get().pending[task.uuid]) return;
+    // orphan the first request. An in-flight edit blocks too: moves and edits
+    // share the uuid-keyed delayTimers slot, so starting a move mid-edit would
+    // clobber the edit's timer/reconcile. Ignore the drag until both are clear.
+    if (get().pending[task.uuid] || get().pendingEdits[task.uuid]) return;
 
     const fromColumn = task.column;
     // Head the write is issued against: reconciliation only lets a snapshot that
