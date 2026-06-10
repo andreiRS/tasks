@@ -75,6 +75,11 @@ export function Card({ task }: { task: BoardTask }) {
         // Pending = subtle fade only. No border/size change so the card never jumps.
         opacity: showPending ? 0.6 : 1,
         zIndex: isDragging ? 50 : undefined,
+        // Stable per-card name so the View Transitions API can morph this card
+        // from its old lane slot to the new one when an external move arrives
+        // (store.applySnapshot wraps such commits in a transition). uuid is
+        // unique; the `card-` prefix guarantees a valid CSS custom-ident.
+        viewTransitionName: isPlaceholder ? undefined : `card-${task.uuid}`,
       }}
     >
       {/* Effort dot — top-right corner */}

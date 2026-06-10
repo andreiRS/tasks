@@ -14,3 +14,23 @@ body,
 #root {
   height: 100%;
 }
+
+/* Card move animation (store.applySnapshot starts a view transition when an
+   external move changes a card's lane). Each card carries a per-uuid
+   `view-transition-name`, so the browser morphs it from its old slot to the new
+   one; cards below the vacated/filled slot slide as their positions shift. A
+   gentle ease-out over ~480ms reads as "placed", not flung. */
+::view-transition-group(*) {
+  animation-duration: 480ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Respect reduced-motion: the store already skips starting a transition, but
+   also neutralize any default UA view-transition animation as a belt-and-braces. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
