@@ -13,18 +13,29 @@ import { EFFORT_DOT } from "./effort";
 import { timeAgo } from "./time";
 
 export function Card({ task }: { task: BoardTask }) {
-  const { bg, edge, tilt } = seededStyle(task.id);
+  // A create placeholder has the sentinel id -1 (no short id assigned yet); it
+  // renders a muted "#…" pill instead of a real id and isn't draggable until the
+  // snapshot replaces it with the real card.
+  const isPlaceholder = task.id < 0;
+  const { bg, edge, tilt } = seededStyle(isPlaceholder ? 0 : task.id);
   const effort = EFFORT_DOT[task.effort];
   const isBlocked = task.blockedBy.length > 0;
   const isAgent = task.attendance === "unattended";
 
   // Pending look only once the 200ms delay gate has fired (slow writes only).
-  const showPending = useBoardStore((s) => s.pending[task.uuid]?.showPending ?? false);
+  // A move tracks under `pending` (by uuid); a create under `pendingCreates`
+  // (keyed by its temp key, which is the placeholder's uuid).
+  const showPending = useBoardStore(
+    (s) =>
+      s.pending[task.uuid]?.showPending ?? s.pendingCreates[task.uuid]?.showPending ?? false,
+  );
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: task.uuid,
     // Carry the full task so onDragEnd can dispatch the move without a lookup.
     data: { task },
+    // A placeholder can't be moved until the server assigns it a real id.
+    disabled: isPlaceholder,
   });
 
   return (
@@ -32,7 +43,9 @@ export function Card({ task }: { task: BoardTask }) {
       ref={setNodeRef}
       {...listeners}
       {...attributes}
-      className="relative cursor-grab touch-none rounded-[3px] px-3.5 pt-3 pb-2.5 text-slate-800 shadow-[2px_3px_6px_rgba(0,0,0,0.18)] transition-transform duration-150 hover:-translate-y-0.5 hover:rotate-0 active:cursor-grabbing"
+      className={`relative touch-none rounded-[3px] px-3.5 pt-3 pb-2.5 text-slate-800 shadow-[2px_3px_6px_rgba(0,0,0,0.18)] transition-transform duration-150 hover:-translate-y-0.5 hover:rotate-0 ${
+        isPlaceholder ? "cursor-default" : "cursor-grab active:cursor-grabbing"
+      }`}
       style={{
         backgroundColor: bg,
         // The darker edge sells the layered-paper look.
@@ -67,9 +80,19 @@ export function Card({ task }: { task: BoardTask }) {
 
       {/* Header: short-id pill + attendance marker */}
       <div className="mb-1.5 flex items-center gap-1.5 pr-4">
-        <span className="inline-flex items-center rounded-full bg-black/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold tracking-tight text-slate-700">
-          #{task.id}
-        </span>
+        {isPlaceholder ? (
+          <span
+            className="inline-flex items-center rounded-full bg-black/5 px-1.5 py-0.5 font-mono text-[11px] font-semibold tracking-tight text-slate-400"
+            title="saving — id assigned on save"
+            aria-label="pending id"
+          >
+            #…
+          </span>
+        ) : (
+          <span className="inline-flex items-center rounded-full bg-black/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold tracking-tight text-slate-700">
+            #{task.id}
+          </span>
+        )}
         <span
           className="text-[13px] leading-none"
           title={isAgent ? "agent (unattended)" : "human (attended)"}

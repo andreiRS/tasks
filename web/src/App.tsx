@@ -4,7 +4,7 @@
 // SSE live updates (#20), the create modal (#21) and the detail drawer (#22)
 // build on this.
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   DndContext,
   PointerSensor,
@@ -17,6 +17,7 @@ import { useBoardStore } from "./store";
 import { Rail } from "./board/Rail";
 import { Board } from "./board/Board";
 import { Toast } from "./board/Toast";
+import { NewTaskModal } from "./board/NewTaskModal";
 import { timeAgo } from "./board/time";
 
 export function App() {
@@ -27,6 +28,7 @@ export function App() {
   const subscribe = useBoardStore((s) => s.subscribe);
   const load = useBoardStore((s) => s.load);
   const move = useBoardStore((s) => s.move);
+  const [showNewTask, setShowNewTask] = useState(false);
 
   // Live board via SSE (#20). The stream's connect frame renders the initial
   // board and every committed mutation pushes a fresh full snapshot, so the
@@ -59,6 +61,15 @@ export function App() {
         <header className="flex items-baseline justify-between px-6 pt-5">
           <h1 className="font-script text-3xl text-slate-800">board</h1>
           <div className="flex items-baseline gap-3">
+            {status === "ready" && (
+              <button
+                type="button"
+                onClick={() => setShowNewTask(true)}
+                className="self-center rounded-md bg-slate-800 px-3 py-1.5 text-sm font-semibold text-amber-100 shadow-sm hover:bg-slate-700"
+              >
+                + new task
+              </button>
+            )}
             {/* Subtle, non-destructive hint: an established stream dropped and is
                 reconnecting. The last board stays visible (we don't flip to the
                 hard error screen); an initial-connect failure uses the error UI
@@ -104,6 +115,7 @@ export function App() {
         )}
       </main>
 
+      <NewTaskModal open={showNewTask} onClose={() => setShowNewTask(false)} />
       <Toast />
     </div>
   );

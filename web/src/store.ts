@@ -16,7 +16,7 @@
 //   - A failed move snaps the card back and raises a toast carrying the code.
 
 import { create } from "zustand";
-import type { Board, BoardHead, BoardTask } from "./board/types";
+import type { Board, BoardHead, BoardTask, Effort } from "./board/types";
 
 export type LoadStatus = "idle" | "loading" | "ready" | "error";
 
@@ -39,6 +39,26 @@ export interface PendingMove {
   issuedHead: BoardHead | null;
 }
 
+/** One in-flight optimistic create, keyed by a temporary client key in the
+ *  store map. Mirrors PendingMove's design: it carries the optimistic fields so
+ *  the placeholder card can render, the head it was issued against (so a
+ *  post-dating snapshot can reconcile it), the 200ms delay flag, and — once the
+ *  POST returns 201 — the server-assigned uuid used to match the snapshot. */
+export interface PendingCreate {
+  /** Temporary client key (also the placeholder card's synthetic uuid). */
+  tempKey: string;
+  title: string;
+  body: string;
+  effort: Effort;
+  /** Becomes true once the 200ms delay timer fires (drives the pending look). */
+  showPending: boolean;
+  /** Head the create was issued against; a snapshot post-dating it reconciles. */
+  issuedHead: BoardHead | null;
+  /** Server-assigned uuid, recorded after the POST returns 201. Until then the
+   *  placeholder can't be matched in a snapshot (it has no real uuid yet). */
+  uuid: string | null;
+}
+
 /** Minimal toast slice for #19. #23 generalizes the write-failure UX. */
 export interface Toast {
   code: string;
@@ -51,6 +71,8 @@ interface BoardState {
   error: string | null;
   /** Pending moves keyed by task uuid. */
   pending: Record<string, PendingMove>;
+  /** Pending creates keyed by temporary client key. */
+  pendingCreates: Record<string, PendingCreate>;
   toast: Toast | null;
   /** Head of the most recently applied snapshot. Drives the stale-snapshot
    *  ordering guard: a frame strictly older than this is ignored. */
@@ -77,6 +99,9 @@ interface BoardState {
   applySnapshot: (board: Board) => void;
   /** Optimistically move a task to `toColumn`, persist, then reconcile. */
   move: (task: BoardTask, toColumn: string) => Promise<void>;
+  /** Optimistically create a task in `backlog`, persist via POST /api/tasks,
+   *  then let the SSE snapshot reconcile (drop the placeholder). */
+  createTask: (input: { title: string; body: string; effort: Effort }) => Promise<void>;
   dismissToast: () => void;
 }
 
@@ -146,11 +171,44 @@ function moveCardBetweenLanes(board: Board, uuid: string, toCol: string): Board 
   return { ...board, lanes };
 }
 
+/** New tasks always land in `backlog`, attended (server contract). */
+const BACKLOG = "backlog";
+
+/** Build the optimistic placeholder card for a pending create. It carries the
+ *  temp key as a synthetic uuid (so dnd/keys stay unique) and a sentinel id of
+ *  -1 — Card renders a muted "#…" pill instead of a real short id for it. The
+ *  reconciling snapshot replaces it with the real card (correct id + paper). */
+function placeholderCard(p: PendingCreate): BoardTask {
+  const now = new Date().toISOString();
+  return {
+    id: -1,
+    uuid: p.tempKey,
+    title: p.title,
+    body: p.body,
+    column: BACKLOG,
+    effort: p.effort,
+    attendance: "attended",
+    updated_at: now,
+    created_at: now,
+    blockedBy: [],
+  };
+}
+
+/** Append the placeholder for `p` to the end of `backlog` in a fresh lanes map.
+ *  The reconciling snapshot fixes final oldest-first order. */
+function applyOptimisticCreate(board: Board, p: PendingCreate): Board {
+  const lanes: Record<string, BoardTask[]> = {};
+  for (const col of board.columns) lanes[col] = board.lanes[col] ?? [];
+  lanes[BACKLOG] = [...(lanes[BACKLOG] ?? []), placeholderCard(p)];
+  return { ...board, lanes };
+}
+
 export const useBoardStore = create<BoardState>((set, get) => ({
   board: null,
   status: "idle",
   error: null,
   pending: {},
+  pendingCreates: {},
   toast: null,
   appliedHead: null,
   connection: "live",
@@ -301,9 +359,58 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       // Either way the pending overlay is dropped: a confirming snapshot already
       // places the card, a superseding one wins outright.
     }
+    // (6b) Reconcile pending creates the same way. A create is resolved by any
+    // snapshot whose head post-dates the head it was issued against AND that
+    // contains the task by the uuid the POST returned. Match by uuid (sha-
+    // inequality post-dating, like moves), not by the placeholder's synthetic
+    // uuid: the placeholder lives only in the overlay. Until the POST returns a
+    // uuid we can't match, so the placeholder simply stays. Once the real card
+    // is in the snapshot we drop the placeholder — the snapshot card takes over.
+    const { pendingCreates } = get();
+    const nextPendingCreates: Record<string, PendingCreate> = {};
+    const everyTask = (b: Board): BoardTask[] =>
+      b.columns.flatMap((c) => b.lanes[c] ?? []);
+    for (const p of Object.values(pendingCreates)) {
+      const postDates =
+        board.head != null &&
+        (p.issuedHead == null || board.head.sha !== p.issuedHead.sha);
+      if (!postDates) {
+        // Snapshot doesn't yet reflect a commit after this create — still in
+        // flight/committing. Keep the optimistic placeholder.
+        nextPendingCreates[p.tempKey] = p;
+        continue;
+      }
+      const landed =
+        p.uuid != null && everyTask(board).some((t) => t.uuid === p.uuid);
+      if (!landed) {
+        // Post-dating snapshot without our task: the POST hasn't recorded a uuid
+        // yet (response in flight) — keep waiting — OR it landed by uuid we have
+        // and just isn't here, which can't happen for an at-or-after commit of
+        // our own successful create. The failure path (createTask catch) is what
+        // drops a create that errored; here we only clear confirmed ones.
+        nextPendingCreates[p.tempKey] = p;
+        continue;
+      }
+      // Confirmed: the real card is in the snapshot. Drop the placeholder.
+      clearDelayTimer(p.tempKey);
+    }
+
+    // Re-overlay still-pending create placeholders onto the replaced board.
+    // Unlike a move (whose card already exists in the snapshot, just in another
+    // lane), a create's card does NOT exist in any snapshot until its commit, so
+    // a wholesale replace would make the placeholder vanish between the
+    // optimistic apply and the confirming snapshot (e.g. an unrelated frame
+    // arriving first). Re-appending keeps it visible; the confirming snapshot
+    // drops it from pendingCreates and the real card takes its place.
+    let nextBoard = board;
+    for (const p of Object.values(nextPendingCreates)) {
+      nextBoard = applyOptimisticCreate(nextBoard, p);
+    }
+
     set((s) => ({
-      board,
+      board: nextBoard,
       pending: nextPending,
+      pendingCreates: nextPendingCreates,
       status: "ready",
       error: null,
       appliedHead: board.head,
@@ -393,6 +500,106 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     }
   },
 
+  createTask: async ({ title, body, effort }) => {
+    const board = get().board;
+    if (!board) return; // no board yet; the modal is only reachable once ready.
+
+    // Temp client key: doubles as the placeholder card's synthetic uuid and the
+    // pendingCreates map key. Browser app code, so Date.now()/random are fine.
+    const tempKey = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const issuedHead = board.head;
+    const create: PendingCreate = {
+      tempKey,
+      title,
+      body,
+      effort,
+      showPending: false,
+      issuedHead,
+      uuid: null,
+    };
+
+    // 1. Optimistic apply — placeholder appears in backlog immediately.
+    set({ board: applyOptimisticCreate(board, create) });
+
+    // 2. Track the pending create + start the 200ms delay-gate timer (a fast
+    //    create confirms via SSE before this fires and never flashes pending).
+    set((s) => ({ pendingCreates: { ...s.pendingCreates, [tempKey]: create } }));
+    clearDelayTimer(tempKey);
+    delayTimers.set(
+      tempKey,
+      setTimeout(() => {
+        delayTimers.delete(tempKey);
+        set((s) => {
+          const p = s.pendingCreates[tempKey];
+          if (!p) return s; // already confirmed/failed
+          return {
+            pendingCreates: { ...s.pendingCreates, [tempKey]: { ...p, showPending: true } },
+          };
+        });
+      }, PENDING_DELAY_MS),
+    );
+
+    // 3. Persist. On 201 record the returned uuid against the temp key so
+    //    applySnapshot can match the real card when a post-dating frame carries
+    //    it. We do NOT refetch: the commit's SSE frame reconciles (drops the
+    //    placeholder), same as move().
+    try {
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title, body, effort }),
+      });
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => null)) as
+          | { error?: { code?: string; message?: string } }
+          | null;
+        const code = errBody?.error?.code ?? `HTTP_${res.status}`;
+        const message = errBody?.error?.message ?? `create failed (${res.status})`;
+        throw new CreateError(code, message);
+      }
+      const ok = (await res.json().catch(() => null)) as { uuid?: string } | null;
+      const uuid = ok?.uuid;
+      // Record the uuid (if the placeholder is still pending — a very fast SSE
+      // frame could already have... no: it can't confirm before we have the
+      // uuid, so the placeholder is necessarily still here). Stash it so the
+      // next post-dating snapshot reconciles by uuid.
+      if (uuid) {
+        set((s) => {
+          const p = s.pendingCreates[tempKey];
+          if (!p) return s;
+          return { pendingCreates: { ...s.pendingCreates, [tempKey]: { ...p, uuid } } };
+        });
+        // The snapshot that committed this create may have ALREADY arrived while
+        // the POST response was in flight (its head post-dates issuedHead but we
+        // couldn't match it without the uuid, so it was kept). Re-run reconcile
+        // against the current board now that we know the uuid.
+        const current = get().board;
+        if (current) get().applySnapshot(current);
+      }
+    } catch (err) {
+      // 4. Failure — remove the placeholder, clear pending, toast the code.
+      clearDelayTimer(tempKey);
+      const code = err instanceof CreateError ? err.code : "TRANSPORT_ERROR";
+      const message = err instanceof Error ? err.message : String(err);
+      set((s) => {
+        const { [tempKey]: _dropped, ...rest } = s.pendingCreates;
+        const current = s.board;
+        const cleaned = current
+          ? {
+              ...current,
+              lanes: Object.fromEntries(
+                current.columns.map((c) => [
+                  c,
+                  (current.lanes[c] ?? []).filter((t) => t.uuid !== tempKey),
+                ]),
+              ),
+            }
+          : current;
+        return { board: cleaned, pendingCreates: rest, toast: { code, message } };
+      });
+    }
+  },
+
   dismissToast: () => set({ toast: null }),
 }));
 
@@ -404,5 +611,16 @@ class MoveError extends Error {
   ) {
     super(message);
     this.name = "MoveError";
+  }
+}
+
+/** Same shape as MoveError, for the create write path. */
+class CreateError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CreateError";
   }
 }
