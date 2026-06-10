@@ -76,6 +76,34 @@ What it does:
 
 The board exposes a small JSON API under `/api` (`GET /api/board`, `GET /api/events` for the SSE stream, `POST /api/tasks`, `POST /api/tasks/:id/move`, `PATCH /api/tasks/:id`) using the same error envelope and codes as the CLI.
 
+## Claude Code skill
+
+The repo ships a [Claude Code](https://claude.com/claude-code) skill in [`skill/`](./skill/SKILL.md). It teaches an agent to drive `tasks` as its own working memory: when you hand Claude a multi-step job, it creates one task per slice, wires up the dependencies, and moves cards across the board as it works, so the progress survives a dropped session and you can watch it live on the web board.
+
+Install it by copying (or symlinking) the folder into your skills directory:
+
+```sh
+# user-wide, available in every project
+ln -s "$PWD/skill" ~/.claude/skills/tasks
+
+# or per-project, checked in alongside the repo it tracks
+ln -s ../../skill your-project/.claude/skills/tasks
+```
+
+Claude consults it on its own once installed. It triggers on multi-step work (three or more steps, or any ordering between them) and on direct board requests like "add a task", "what's blocking X", or "show me the board". A one-line edit won't trigger it, the bookkeeping isn't worth it there.
+
+What it looks like in practice. You ask Claude to "add rate limiting to the API and write tests for it." Instead of holding the plan in its head, it lays the work on the board and walks it:
+
+```sh
+tasks new "Add rate-limit middleware" --unattended          # task: new #4
+tasks new "Tests for rate limiter" --unattended --deps 4    # tests wait on the impl
+tasks mv 4 ready && tasks next --unattended                 # pull the unblocked slice
+tasks mv 4 doing                                            # ...writes the middleware...
+tasks mv 4 done                                             # tests are now unblocked
+```
+
+The payoff: because every move is a git commit, the board is a durable, diffable record. If the session drops mid-task you reopen the board and see "middleware done, tests in review" instead of guessing, and you can watch the cards move in real time at `tasks serve` while the agent works.
+
 ## Frontmatter shape
 
 ```yaml

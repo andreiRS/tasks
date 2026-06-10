@@ -12,6 +12,11 @@ versions; breaking changes will be called out explicitly here.
 
 ### Added
 
+- Claude Code skill in `skill/` that teaches an agent to track its own
+  multi-step work on the board: one task per slice, dependencies wired up,
+  cards moved across columns as it goes. Triggers on multi-step jobs and on
+  direct board requests; install by symlinking `skill/` into a
+  `.claude/skills/` directory. See the README "Claude Code skill" section.
 - `tasks serve [--port <n>]` boots a localhost web board for the current
   project's store. It binds to `127.0.0.1` (single-user, no auth), refuses
   to start without an initialized store (`NOT_INITIALIZED`), and prints its
