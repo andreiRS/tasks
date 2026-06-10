@@ -85,13 +85,19 @@ Two things to know about `serve`:
 
 ### The loop
 
-**Card first, then work.** The moment you know what the next slice is, create its
-card and move it to `doing` *before* you make the first edit or run the first
-command for it — not after, not at the end of the job. The board exists to mirror
-what you're doing *right now*; if you code first and log later, it can't, and a
-session that dies mid-slice loses the work with no trace. If you catch yourself
-editing with nothing in `doing`, stop and create the card before the next change.
-The cost is one command; the payoff is a board that's always true.
+**Card first, then work.** Once a job has cleared the *When to start* bar (3+
+steps or real ordering), create each slice's card and move it to `doing` *before*
+you make the first edit or run the first command for it — not after, not at the
+end of the job. The board exists to mirror what you're doing *right now*; if you
+code first and log later, it can't, and a session that dies mid-slice loses the
+work with no trace. If you catch yourself editing a tracked job with nothing in
+`doing`, stop and create the card before the next change. The cost is one command;
+the payoff is a board that's always true.
+
+This rule does **not** apply below that bar. A genuinely trivial one-shot — a typo,
+a one-line tweak, a quick read — needs no card; making one is the busywork the
+skill exists to avoid. The threshold is the escape hatch: when in doubt about a
+borderline change, it's small, skip the card.
 
 Think of each task as a slice of the job. A good slice is something you'd want to
 see as a single line on a board: "Add rate-limit middleware", not "type a
