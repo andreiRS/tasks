@@ -1,5 +1,7 @@
-// Collapsed left rail — just a logo mark. No search / filter toolbar (#18).
-// A wider rail with controls is out of scope for this slice.
+// Collapsed left rail — logo mark at the top, a Slack-style user menu pinned to
+// the bottom (#29). No search / filter toolbar (#18).
+
+import { UserMenu } from "./UserMenu";
 
 export function Rail() {
   return (
@@ -11,6 +13,7 @@ export function Rail() {
       >
         t
       </div>
+      <UserMenu />
     </aside>
   );
 }
