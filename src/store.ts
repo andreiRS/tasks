@@ -611,10 +611,16 @@ export async function unlinkTask(
       throw new TasksError("NOT_FOUND", `task not found: ${subjectRef}`, { id: subjectRef });
     }
 
-    // Resolve each target ref to a UUID
+    // Resolve each target ref to a UUID. unlink deletes a reference rather than
+    // following it, so the target need not be a LIVE task: it may be archived,
+    // or a fully-deleted uuid that still lingers in the subject's deps (a stale
+    // edge is exactly what you'd reach for unlink to remove). Resolution order:
+    // live task -> archived task -> raw uuid literally present in deps.
     const allTasks = findAllTasks(dir);
-    const knownByUuid = new Map(allTasks.map((t) => [t.uuid, t]));
-    const knownById = new Map(allTasks.map((t) => [t.id, t]));
+    const archivedTasks = findArchivedTasks(dir);
+    const knownByUuid = new Map([...allTasks, ...archivedTasks].map((t) => [t.uuid, t]));
+    const knownById = new Map([...allTasks, ...archivedTasks].map((t) => [t.id, t]));
+    const subjectDeps = new Set(subject.deps);
 
     const resolvedTargetUuids: string[] = [];
     for (const ref of targetRefs) {
@@ -626,6 +632,13 @@ export async function unlinkTask(
       }
 
       if (!targetTask) {
+        // No task resolves. If the ref is a raw uuid sitting in the subject's
+        // deps, it's a danging edge to a deleted task; strip it. Otherwise the
+        // ref is genuinely bogus.
+        if (subjectDeps.has(ref)) {
+          resolvedTargetUuids.push(ref);
+          continue;
+        }
         throw new TasksError(
           "UNKNOWN_UUID",
           `target not found: ${ref}`,

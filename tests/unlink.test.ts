@@ -228,3 +228,58 @@ test("tasks unlink --json emits success envelope with ok/id/uuid/removed", async
   expect(parsed.removed as string[]).toContain(taskB.uuid);
   expect(parsed.removed as string[]).not.toContain(taskC.uuid);
 });
+
+// ─── #22: unlink a stale edge whose target no longer resolves ──────────────────
+
+test("tasks unlink: removes an edge to an archived target (by short id)", async () => {
+  const taskA = await plantTask("dependent A");
+  const taskB = await plantTask("blocker B");
+  await linkTasks(taskA.id, taskB.uuid);
+  // Move B to done and archive it. A's edge now points at an archived task.
+  await runTasks(["mv", String(taskB.id), "done"]);
+  await runTasks(["archive", String(taskB.id)]);
+
+  // unlink is exactly the tool you'd reach for to drop the stale edge; the
+  // archived target must resolve by its short id, not error with UNKNOWN_UUID.
+  const { exitCode, stderr } = await runTasks(["unlink", String(taskA.id), "--depends-on", String(taskB.id)]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  expect(await getTaskDeps(String(taskA.id))).not.toContain(taskB.uuid);
+});
+
+test("tasks unlink: removes an edge to an archived target (by uuid)", async () => {
+  const taskA = await plantTask("dependent A");
+  const taskB = await plantTask("blocker B");
+  await linkTasks(taskA.id, taskB.uuid);
+  await runTasks(["mv", String(taskB.id), "done"]);
+  await runTasks(["archive", String(taskB.id)]);
+
+  const { exitCode, stderr } = await runTasks(["unlink", String(taskA.id), "--depends-on", taskB.uuid]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  expect(await getTaskDeps(String(taskA.id))).not.toContain(taskB.uuid);
+});
+
+test("tasks unlink: removes a dangling edge whose target no longer exists at all", async () => {
+  const taskA = await plantTask("dependent A");
+  const taskB = await plantTask("blocker B");
+  await linkTasks(taskA.id, taskB.uuid);
+  await runTasks(["mv", String(taskB.id), "done"]);
+  await runTasks(["archive", String(taskB.id)]);
+
+  // Hard-delete the archived file (committed, so the tree stays clean) so the
+  // uuid resolves to nothing anywhere.
+  const storeDir = deriveStoreDir();
+  const gitBin = Bun.which("git") ?? "/opt/homebrew/bin/git";
+  for (const f of require("node:fs").readdirSync(join(storeDir, "archive"))) {
+    await Bun.spawn([gitBin, "rm", "-q", join("archive", f)], { cwd: storeDir }).exited;
+  }
+  await Bun.spawn([gitBin, "commit", "-q", "-m", "test: drop archived file"], { cwd: storeDir }).exited;
+
+  // The edge is now truly dangling. unlink must still strip it: you are
+  // deleting a reference, not following it.
+  const { exitCode, stderr } = await runTasks(["unlink", String(taskA.id), "--depends-on", taskB.uuid]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  expect(await getTaskDeps(String(taskA.id))).not.toContain(taskB.uuid);
+});
