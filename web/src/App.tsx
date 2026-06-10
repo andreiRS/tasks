@@ -66,7 +66,7 @@ export function App() {
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-baseline justify-between px-6 pt-5">
           <div className="flex items-baseline gap-3">
-            <h1 className="font-script text-3xl text-slate-800">board</h1>
+            <h1 className="font-script text-3xl text-slate-800">Tasks Board</h1>
             {board?.head && (
               <span className="text-xs text-slate-400">
                 updated {timeAgo(board.head.committed_at)}
