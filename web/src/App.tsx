@@ -23,12 +23,17 @@ export function App() {
   const board = useBoardStore((s) => s.board);
   const status = useBoardStore((s) => s.status);
   const error = useBoardStore((s) => s.error);
+  const subscribe = useBoardStore((s) => s.subscribe);
   const load = useBoardStore((s) => s.load);
   const move = useBoardStore((s) => s.move);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // Live board via SSE (#20). The stream's connect frame renders the initial
+  // board and every committed mutation pushes a fresh full snapshot, so the
+  // board stays current with no refetch. The effect's cleanup closes the
+  // EventSource, which also makes StrictMode's double-invoke safe (the first
+  // run's connection is closed before the second opens) and never leaks or
+  // duplicates connections. EventSource handles reconnect natively on drop.
+  useEffect(() => subscribe(), [subscribe]);
 
   // Pointer for mouse/touch/pen; Keyboard for accessible drag (space/enter to
   // grab, arrows to move, space/enter to drop) — see dnd-kit v6 sensors.
@@ -63,7 +68,14 @@ export function App() {
 
         {status === "error" && (
           <p className="px-6 pt-6 text-sm text-red-600">
-            could not reach /api/board{error ? ` (${error})` : ""}
+            could not reach the board{error ? ` (${error})` : ""}{" "}
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="underline underline-offset-2 hover:text-red-700"
+            >
+              retry
+            </button>
           </p>
         )}
 

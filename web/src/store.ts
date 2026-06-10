@@ -1,17 +1,22 @@
-// Board snapshot store (Zustand). Holds the latest `/api/board` snapshot plus
-// the optimistic-write overlay introduced in #19 (drag-to-move).
+// Board snapshot store (Zustand). Holds the latest board snapshot plus the
+// optimistic-write overlay introduced in #19 (drag-to-move).
 //
 // Write model (see docs/specs/serve-board-write-interaction.md):
 //   - move() applies the lane change optimistically, fires POST /api/tasks/:id/move,
-//     then refetches /api/board and reconciles through applySnapshot().
+//     then lets the SSE broadcast frame reconcile through applySnapshot(). There
+//     is no success-path refetch (#20): the commit's snapshot clears the pending
+//     write, and a manual refetch would only risk clobbering a newer frame.
 //   - A pending write is tracked per task uuid; its 200ms delay timer flips the
-//     card to the "saving…" look only if the write is genuinely slow.
-//   - applySnapshot() is the single reconcile path. #20 (SSE) will call this same
-//     action from an EventSource with no rework.
+//     card to the "saving…" look only if the write is genuinely slow. It also
+//     records the board head it was issued against, so reconciliation can tell a
+//     snapshot that post-dates the write from one that pre-dates it.
+//   - applySnapshot() is the single reconcile path; subscribe() (the SSE
+//     EventSource) and the load()/move() fallbacks all funnel through it. It is
+//     idempotent and ignores a snapshot strictly older than the one applied.
 //   - A failed move snaps the card back and raises a toast carrying the code.
 
 import { create } from "zustand";
-import type { Board, BoardTask } from "./board/types";
+import type { Board, BoardHead, BoardTask } from "./board/types";
 
 export type LoadStatus = "idle" | "loading" | "ready" | "error";
 
@@ -22,6 +27,11 @@ export interface PendingMove {
   toColumn: string;
   /** Becomes true once the 200ms delay timer fires (drives the pending look). */
   showPending: boolean;
+  /** Board head the move was issued against (the snapshot the optimistic apply
+   *  sat on top of), or null if the board had no head yet. Reconciliation uses
+   *  it to decide whether an incoming snapshot post-dates this write: only a
+   *  snapshot newer than this head can confirm or supersede it. */
+  issuedHead: BoardHead | null;
 }
 
 /** Minimal toast slice for #19. #23 generalizes the write-failure UX. */
@@ -37,11 +47,21 @@ interface BoardState {
   /** Pending moves keyed by task uuid. */
   pending: Record<string, PendingMove>;
   toast: Toast | null;
+  /** Head of the most recently applied snapshot. Drives the stale-snapshot
+   *  ordering guard: a frame strictly older than this is ignored. */
+  appliedHead: BoardHead | null;
 
-  /** Fetch the current snapshot from the API and replace store state. */
+  /** Fetch the current snapshot from the API and replace store state. A
+   *  fallback for when the SSE stream can't connect; the live subscription is
+   *  the primary path that keeps the board current. */
   load: () => Promise<void>;
+  /** Open the SSE stream and reconcile every frame through applySnapshot().
+   *  Returns a cleanup that closes the EventSource. Safe under StrictMode's
+   *  double-invoke: the effect's cleanup closes the connection before re-open. */
+  subscribe: () => () => void;
   /** Replace the board wholesale and re-overlay still-pending writes. The one
-   *  reconcile path; #20 calls this from SSE too. Idempotent. */
+   *  reconcile path; SSE, load(), and move()'s fallback all funnel here.
+   *  Idempotent, and ignores a snapshot strictly older than the applied one. */
   applySnapshot: (board: Board) => void;
   /** Optimistically move a task to `toColumn`, persist, then reconcile. */
   move: (task: BoardTask, toColumn: string) => Promise<void>;
@@ -58,6 +78,26 @@ function clearDelayTimer(uuid: string): void {
     clearTimeout(t);
     delayTimers.delete(uuid);
   }
+}
+
+/**
+ * Order two board heads along the Store's linear commit history.
+ *
+ * `committed_at` is the commit time (`git log --format=%cI`, ISO-8601), which is
+ * non-decreasing along a linear history, so lexicographic string compare of the
+ * ISO timestamps orders them. Returns <0 if `a` is older than `b`, >0 if newer,
+ * 0 if equal-or-indistinguishable. A `null` head (empty store) sorts oldest.
+ * When timestamps tie but the shas differ, we treat them as equal in time
+ * (idempotent re-apply path) — the linear-history invariant means a true newer
+ * commit carries a `committed_at` that is not strictly older.
+ */
+function compareHeads(a: BoardHead | null, b: BoardHead | null): number {
+  if (a === b) return 0;
+  if (a === null) return -1;
+  if (b === null) return 1;
+  if (a.committed_at < b.committed_at) return -1;
+  if (a.committed_at > b.committed_at) return 1;
+  return 0;
 }
 
 /** Move a task to the end of `toColumn` in a fresh lanes map (optimistic apply).
@@ -100,6 +140,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   error: null,
   pending: {},
   toast: null,
+  appliedHead: null,
 
   load: async () => {
     set({ status: "loading", error: null });
@@ -113,22 +154,77 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     }
   },
 
+  subscribe: () => {
+    // Lazily connect; the server pushes a full snapshot on connect, so the
+    // first frame renders the board (replacing the mount-time load() as the
+    // primary path). Each later frame is a full snapshot too.
+    const source = new EventSource("/api/events");
+    source.onmessage = (ev) => {
+      let snapshot: Board;
+      try {
+        snapshot = JSON.parse(ev.data) as Board;
+      } catch {
+        return; // malformed frame: ignore, the next frame converges.
+      }
+      get().applySnapshot(snapshot);
+    };
+    // EventSource auto-reconnects on a dropped stream. We must NOT close() on a
+    // transient error or we'd kill that native retry; just surface it if the
+    // board never connected. The reconnect's connect-frame reconciles cleanly
+    // because applySnapshot is idempotent and order-guarded.
+    source.onerror = () => {
+      if (get().status !== "ready") {
+        set({ status: "error", error: "could not connect to /api/events" });
+      }
+    };
+    return () => source.close();
+  },
+
   applySnapshot: (board) => {
-    // Re-overlay only the writes still in flight; clear any whose effect the
-    // snapshot already reflects (idempotent reconcile).
+    // (5) Stale-snapshot ordering guard. Commit history is linear, so a frame
+    // whose head is strictly older than the applied one is stale (a late load()
+    // resolving after a newer SSE frame, or out-of-order delivery) — drop it.
+    // Equal-or-newer re-applies idempotently.
+    const { appliedHead } = get();
+    if (compareHeads(board.head, appliedHead) < 0) return;
+
+    // (6) Reconcile pending writes against THIS snapshot. A pending write is
+    // resolved only by a snapshot that post-dates the write's commit (its head
+    // strictly newer than the head the write was issued against); a snapshot
+    // that pre-dates or is concurrent with the write keeps the overlay.
     const { pending } = get();
     const nextPending: Record<string, PendingMove> = {};
+    let discardedOwnWrite = false;
     for (const p of Object.values(pending)) {
+      const postDates = compareHeads(board.head, p.issuedHead) > 0;
+      if (!postDates) {
+        // Snapshot doesn't yet reflect a commit after this write — the write
+        // may still be in flight/committing. Keep the optimistic overlay.
+        nextPending[p.uuid] = p;
+        continue;
+      }
       const lane = board.lanes[p.toColumn] ?? [];
       const landed = lane.some((t) => t.uuid === p.uuid);
-      if (landed) {
-        // Snapshot agrees — pending resolved.
-        clearDelayTimer(p.uuid);
-      } else {
-        nextPending[p.uuid] = p;
+      clearDelayTimer(p.uuid);
+      if (!landed) {
+        // The write was superseded or never landed (a newer commit doesn't show
+        // it in the target lane). The snapshot wins; per spec §5 toast because
+        // the user's own change was discarded.
+        discardedOwnWrite = true;
       }
+      // Either way the pending overlay is dropped: a confirming snapshot already
+      // places the card, a superseding one wins outright.
     }
-    set({ board, pending: nextPending, status: "ready", error: null });
+    set((s) => ({
+      board,
+      pending: nextPending,
+      status: "ready",
+      error: null,
+      appliedHead: board.head,
+      toast: discardedOwnWrite
+        ? { code: "SUPERSEDED", message: "your change was replaced by a newer update" }
+        : s.toast,
+    }));
   },
 
   move: async (task, toColumn) => {
@@ -141,6 +237,9 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     if (get().pending[task.uuid]) return;
 
     const fromColumn = task.column;
+    // Head the write is issued against: reconciliation only lets a snapshot that
+    // post-dates this head confirm or supersede the move.
+    const issuedHead = board.head;
 
     // 1. Optimistic apply.
     set({ board: applyOptimisticMove(board, task, toColumn) });
@@ -149,7 +248,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set((s) => ({
       pending: {
         ...s.pending,
-        [task.uuid]: { uuid: task.uuid, fromColumn, toColumn, showPending: false },
+        [task.uuid]: { uuid: task.uuid, fromColumn, toColumn, showPending: false, issuedHead },
       },
     }));
     clearDelayTimer(task.uuid);
@@ -165,7 +264,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       }, PENDING_DELAY_MS),
     );
 
-    // 3. Persist, then reconcile against an authoritative refetch.
+    // 3. Persist. On success we do NOT refetch: the commit's SSE broadcast frame
+    //    post-dates this write and reconciles it via applySnapshot (clearing the
+    //    pending overlay). A manual refetch here would be redundant and could
+    //    clobber a newer frame, so it's gone (#20 item 4).
     try {
       const res = await fetch(`/api/tasks/${task.id}/move`, {
         method: "POST",
@@ -180,12 +282,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         const message = body?.error?.message ?? `move failed (${res.status})`;
         throw new MoveError(code, message);
       }
-
-      // Success — refetch the full board and reconcile (same path #20 uses).
-      const snapRes = await fetch("/api/board");
-      if (!snapRes.ok) throw new Error(`HTTP ${snapRes.status}`);
-      const snapshot = (await snapRes.json()) as Board;
-      get().applySnapshot(snapshot);
+      // Success: leave the pending overlay in place; the SSE frame clears it.
     } catch (err) {
       // 4. Failure — snap the card back to its source lane, clear pending, toast.
       clearDelayTimer(task.uuid);
