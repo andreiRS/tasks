@@ -64,16 +64,15 @@ export function createLiveSync(
     return encoder.encode(`data: ${JSON.stringify(snapshot)}\n\n`);
   }
 
-  /** Write a keep-alive comment to every client. A `:`-prefixed line is an SSE
-   *  comment: the browser's EventSource ignores it (no `message` event), but it
-   *  is real bytes on the wire, which is exactly what keeps the connection from
-   *  going idle long enough for an intermediary to drop it. */
-  function pulse(): void {
+  /** Write one frame to every client, dropping any whose controller is already
+   *  closed (a client that disconnected between its cancel() and this write).
+   *  The single home for the dead-client guard: both the snapshot broadcast and
+   *  the heartbeat keep-alive go through here. */
+  function enqueueAll(frame: Uint8Array): void {
     for (const controller of clients) {
       try {
-        controller.enqueue(heartbeatFrame);
+        controller.enqueue(frame);
       } catch {
-        // Controller already closed: drop it (same guard as broadcast()).
         clients.delete(controller);
       }
     }
@@ -88,16 +87,7 @@ export function createLiveSync(
       // (or the next mutation) re-reads and converges.
       return;
     }
-    const frame = frameFor(snapshot);
-    for (const controller of clients) {
-      try {
-        controller.enqueue(frame);
-      } catch {
-        // Controller already closed (client disconnected between cancel and
-        // this tick): drop it so we never throw writing to a dead stream.
-        clients.delete(controller);
-      }
-    }
+    enqueueAll(frameFor(snapshot));
   }
 
   function onFsEvent(_event: string, filename: string | null): void {
@@ -114,9 +104,12 @@ export function createLiveSync(
     watcher = watch(dir, { recursive: true }, onFsEvent);
     // Heartbeat shares the watcher's lifecycle: lazily started on the first
     // client, torn down with the watcher when the last one leaves. A
-    // heartbeatMs <= 0 disables it (lets a test opt out entirely).
+    // heartbeatMs <= 0 disables it (lets a test opt out entirely). The frame is
+    // a `:`-prefixed SSE comment: EventSource ignores it (no `message` event),
+    // but the bytes on the wire keep the connection from going idle long enough
+    // for an intermediary to drop it.
     if (heartbeatMs > 0 && heartbeat === null) {
-      heartbeat = setInterval(pulse, heartbeatMs);
+      heartbeat = setInterval(() => enqueueAll(heartbeatFrame), heartbeatMs);
     }
   }
 
