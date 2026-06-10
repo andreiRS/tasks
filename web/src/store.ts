@@ -221,6 +221,54 @@ function everyTask(b: Board): BoardTask[] {
   return b.columns.flatMap((c) => b.lanes[c] ?? []);
 }
 
+/** Carries the server error envelope's `code` to the catch handler. ONE class
+ *  for all three write paths (#23): move/create/edit all throw it and the shared
+ *  failure helper reads `.code` off it (falling back to TRANSPORT_ERROR). */
+class WriteError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "WriteError";
+  }
+}
+
+/** The single write-failure path (#23, AC2). Every write (move/create/edit)
+ *  funnels its catch through here so the COMMON behavior lives in one place:
+ *  clear the delay timer, drop the pending entry, derive {code,message} from the
+ *  error (WriteError carries the server code; anything else is TRANSPORT_ERROR),
+ *  apply the per-type revert, and raise the toast. The revert DIFFERS per write
+ *  (move relocates the card; create removes the placeholder; edit restores
+ *  prevFields), so it's passed in as a closure: `revert` receives the current
+ *  board and returns the reverted board, and must itself be a no-op when a newer
+ *  authoritative snapshot already superseded the write (the "stillOptimistic"
+ *  guard), so it never clobbers a state the snapshot already won.
+ *
+ *  `drop` removes this write's pending entry from its own map; we pass it in
+ *  because the three maps differ (pending / pendingCreates / pendingEdits). */
+function handleWriteFailure(
+  set: (fn: (s: BoardState) => Partial<BoardState>) => void,
+  opts: {
+    key: string;
+    err: unknown;
+    drop: (s: BoardState) => Partial<BoardState>;
+    revert: (board: Board) => Board;
+  },
+): void {
+  clearDelayTimer(opts.key);
+  const code = opts.err instanceof WriteError ? opts.err.code : "TRANSPORT_ERROR";
+  const message = opts.err instanceof Error ? opts.err.message : String(opts.err);
+  set((s) => {
+    const current = s.board;
+    return {
+      ...opts.drop(s),
+      board: current ? opts.revert(current) : current,
+      toast: { code, message },
+    };
+  });
+}
+
 /** New tasks always land in `backlog`, attended (server contract). */
 const BACKLOG = "backlog";
 
@@ -581,29 +629,30 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           | null;
         const code = body?.error?.code ?? `HTTP_${res.status}`;
         const message = body?.error?.message ?? `move failed (${res.status})`;
-        throw new MoveError(code, message);
+        throw new WriteError(code, message);
       }
       // Success: leave the pending overlay in place; the SSE frame clears it.
     } catch (err) {
       // 4. Failure — snap the card back to its source lane, clear pending, toast.
-      clearDelayTimer(task.uuid);
-      const code = err instanceof MoveError ? err.code : "TRANSPORT_ERROR";
-      const message = err instanceof Error ? err.message : String(err);
-      set((s) => {
-        const { [task.uuid]: _dropped, ...rest } = s.pending;
-        const current = s.board;
-        // Snap back ONLY when the card is still our optimistic copy in toColumn.
-        // If a newer authoritative snapshot superseded the move (card no longer
-        // in toColumn), the snapshot already won — leave the board untouched.
-        // When we do snap back, relocate the card the current board holds, never
-        // the stale drag-time object.
-        const stillOptimistic =
-          current?.lanes[toColumn]?.some((t) => t.uuid === task.uuid) ?? false;
-        const snappedBack =
-          current && stillOptimistic
+      //    Shared path (#23); the revert is move-specific: relocate the card the
+      //    CURRENT board holds (never the stale drag-time object) back to its
+      //    source lane, but ONLY while it's still our optimistic copy in
+      //    toColumn. If a newer authoritative snapshot superseded the move (card
+      //    no longer in toColumn), the snapshot already won — leave it untouched.
+      handleWriteFailure(set, {
+        key: task.uuid,
+        err,
+        drop: (s) => {
+          const { [task.uuid]: _dropped, ...rest } = s.pending;
+          return { pending: rest };
+        },
+        revert: (current) => {
+          const stillOptimistic =
+            current.lanes[toColumn]?.some((t) => t.uuid === task.uuid) ?? false;
+          return stillOptimistic
             ? moveCardBetweenLanes(current, task.uuid, fromColumn)
             : current;
-        return { board: snappedBack, pending: rest, toast: { code, message } };
+        },
       });
     }
   },
@@ -663,7 +712,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           | null;
         const code = errBody?.error?.code ?? `HTTP_${res.status}`;
         const message = errBody?.error?.message ?? `create failed (${res.status})`;
-        throw new CreateError(code, message);
+        throw new WriteError(code, message);
       }
       const ok = (await res.json().catch(() => null)) as { uuid?: string } | null;
       const uuid = ok?.uuid;
@@ -686,24 +735,26 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       }
     } catch (err) {
       // 4. Failure — remove the placeholder, clear pending, toast the code.
-      clearDelayTimer(tempKey);
-      const code = err instanceof CreateError ? err.code : "TRANSPORT_ERROR";
-      const message = err instanceof Error ? err.message : String(err);
-      set((s) => {
-        const { [tempKey]: _dropped, ...rest } = s.pendingCreates;
-        const current = s.board;
-        const cleaned = current
-          ? {
-              ...current,
-              lanes: Object.fromEntries(
-                current.columns.map((c) => [
-                  c,
-                  (current.lanes[c] ?? []).filter((t) => t.uuid !== tempKey),
-                ]),
-              ),
-            }
-          : current;
-        return { board: cleaned, pendingCreates: rest, toast: { code, message } };
+      //    Shared path (#23); the revert is create-specific: drop the
+      //    placeholder card (matched by tempKey) from every lane. Unlike
+      //    move/edit there's no stillOptimistic guard — a placeholder only ever
+      //    lives in the overlay, so removing it can't clobber a snapshot value.
+      handleWriteFailure(set, {
+        key: tempKey,
+        err,
+        drop: (s) => {
+          const { [tempKey]: _dropped, ...rest } = s.pendingCreates;
+          return { pendingCreates: rest };
+        },
+        revert: (current) => ({
+          ...current,
+          lanes: Object.fromEntries(
+            current.columns.map((c) => [
+              c,
+              (current.lanes[c] ?? []).filter((t) => t.uuid !== tempKey),
+            ]),
+          ),
+        }),
       });
     }
   },
@@ -781,34 +832,34 @@ export const useBoardStore = create<BoardState>((set, get) => ({
           | null;
         const code = errBody?.error?.code ?? `HTTP_${res.status}`;
         const message = errBody?.error?.message ?? `edit failed (${res.status})`;
-        throw new EditError(code, message);
+        throw new WriteError(code, message);
       }
       // Success: leave the pending overlay in place; the SSE frame clears it.
     } catch (err) {
       // 5. Failure — snap the card's fields back, clear pending, toast the code.
-      clearDelayTimer(task.uuid);
-      const code = err instanceof EditError ? err.code : "TRANSPORT_ERROR";
-      const message = err instanceof Error ? err.message : String(err);
-      set((s) => {
-        const { [task.uuid]: _dropped, ...rest } = s.pendingEdits;
-        const current = s.board;
-        // Snap back ONLY if the card still holds our optimistic values. If a
-        // newer authoritative snapshot already superseded the edit, leave the
-        // board — the snapshot won (mirrors move()'s stillOptimistic caution).
-        const card = current
-          ? everyTask(current).find((t) => t.uuid === task.uuid)
-          : undefined;
-        const stillOptimistic =
-          card != null &&
-          (changed.title === undefined || card.title === changed.title) &&
-          (changed.body === undefined || card.body === changed.body) &&
-          (changed.effort === undefined || card.effort === changed.effort) &&
-          (changed.attendance === undefined || card.attendance === changed.attendance);
-        const snappedBack =
-          current && stillOptimistic
+      //    Shared path (#23); the revert is edit-specific: restore prevFields,
+      //    but ONLY if the card still holds our optimistic values. If a newer
+      //    authoritative snapshot already superseded the edit, leave the board —
+      //    the snapshot won (mirrors move()'s stillOptimistic caution).
+      handleWriteFailure(set, {
+        key: task.uuid,
+        err,
+        drop: (s) => {
+          const { [task.uuid]: _dropped, ...rest } = s.pendingEdits;
+          return { pendingEdits: rest };
+        },
+        revert: (current) => {
+          const card = everyTask(current).find((t) => t.uuid === task.uuid);
+          const stillOptimistic =
+            card != null &&
+            (changed.title === undefined || card.title === changed.title) &&
+            (changed.body === undefined || card.body === changed.body) &&
+            (changed.effort === undefined || card.effort === changed.effort) &&
+            (changed.attendance === undefined || card.attendance === changed.attendance);
+          return stillOptimistic
             ? applyOptimisticEdit(current, task.uuid, prevFields)
             : current;
-        return { board: snappedBack, pendingEdits: rest, toast: { code, message } };
+        },
       });
     }
   },
@@ -818,36 +869,3 @@ export const useBoardStore = create<BoardState>((set, get) => ({
 
   dismissToast: () => set({ toast: null }),
 }));
-
-/** Carries the server error envelope's `code` to the catch handler. */
-class MoveError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "MoveError";
-  }
-}
-
-/** Same shape as MoveError, for the create write path. */
-class CreateError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "CreateError";
-  }
-}
-
-/** Same shape as MoveError, for the drawer-edit write path. */
-class EditError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "EditError";
-  }
-}
