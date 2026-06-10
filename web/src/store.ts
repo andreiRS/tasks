@@ -21,6 +21,7 @@
 //   - A failed move snaps the card back and raises a toast carrying the code.
 
 import { create } from "zustand";
+import { flushSync } from "react-dom";
 import type { Attendance, Board, BoardHead, BoardTask, Effort } from "./board/types";
 
 export type LoadStatus = "idle" | "loading" | "ready" | "error";
@@ -180,6 +181,60 @@ function compareHeads(a: BoardHead | null, b: BoardHead | null): number {
   if (a.committed_at < b.committed_at) return -1;
   if (a.committed_at > b.committed_at) return 1;
   return 0;
+}
+
+/** Map each task uuid to the column it currently sits in. */
+function columnByUuid(board: Board): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const [col, tasks] of Object.entries(board.lanes)) {
+    for (const t of tasks) m.set(t.uuid, col);
+  }
+  return m;
+}
+
+/**
+ * True if any card visibly jumps lanes between the rendered board and the next
+ * one — the cue we want to ANIMATE. A local optimistic move never trips this:
+ * its card is already in the target lane in `prev` (move() applies it before the
+ * confirming snapshot reaches applySnapshot), so prev-column == next-column. So
+ * the only lane changes seen here are external ones (an agent/CLI `mv`, or a
+ * superseded local move snapping back), exactly what a watching human should see
+ * slide rather than pop.
+ */
+function hasLaneChange(prev: Board | null, next: Board): boolean {
+  if (prev === null) return false; // first paint: nothing to animate from.
+  const prevCol = columnByUuid(prev);
+  for (const [col, tasks] of Object.entries(next.lanes)) {
+    for (const t of tasks) {
+      const before = prevCol.get(t.uuid);
+      if (before !== undefined && before !== col) return true;
+    }
+  }
+  return false;
+}
+
+/** Document with the (still-not-in-lib-dom) View Transitions entry point. */
+type ViewTransitionDoc = Document & {
+  startViewTransition?: (cb: () => void) => unknown;
+};
+
+/**
+ * Apply a board state change, morphing cards from their old lane slots to their
+ * new ones via the View Transitions API when `animate` is set. We must flush the
+ * React update synchronously inside the transition callback so the browser
+ * captures the post-change ("after") layout. Degrades to a plain commit where
+ * the API is missing (e.g. Firefox) or the user prefers reduced motion.
+ */
+function commitBoard(animate: boolean, commit: () => void): void {
+  const doc = typeof document !== "undefined" ? (document as ViewTransitionDoc) : undefined;
+  const reduceMotion =
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  if (animate && !reduceMotion && doc && typeof doc.startViewTransition === "function") {
+    doc.startViewTransition(() => flushSync(commit));
+  } else {
+    commit();
+  }
 }
 
 /** Move a task to the end of `toColumn` in a fresh lanes map (optimistic apply).
@@ -559,19 +614,26 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     const selectedStillPresent =
       everyTask(nextBoard).some((t) => t.uuid === get().selectedUuid);
 
-    set((s) => ({
-      board: nextBoard,
-      pending: nextPending,
-      pendingCreates: nextPendingCreates,
-      pendingEdits: nextPendingEdits,
-      selectedUuid: s.selectedUuid != null && selectedStillPresent ? s.selectedUuid : null,
-      status: "ready",
-      error: null,
-      appliedHead: board.head,
-      toast: discardedOwnWrite
-        ? { code: "SUPERSEDED", message: "your change was replaced by a newer update" }
-        : s.toast,
-    }));
+    // Animate only when a card actually changes lanes (an external/CLI move or a
+    // snapped-back local one) so a watching human sees the card slide instead of
+    // pop. A no-move snapshot (field edit, unrelated commit, idempotent re-apply)
+    // commits plainly with no transition overhead.
+    const animate = hasLaneChange(get().board, nextBoard);
+    commitBoard(animate, () => {
+      set((s) => ({
+        board: nextBoard,
+        pending: nextPending,
+        pendingCreates: nextPendingCreates,
+        pendingEdits: nextPendingEdits,
+        selectedUuid: s.selectedUuid != null && selectedStillPresent ? s.selectedUuid : null,
+        status: "ready",
+        error: null,
+        appliedHead: board.head,
+        toast: discardedOwnWrite
+          ? { code: "SUPERSEDED", message: "your change was replaced by a newer update" }
+          : s.toast,
+      }));
+    });
   },
 
   move: async (task, toColumn) => {
