@@ -8,7 +8,7 @@
 // the ::backdrop. We mirror the dialog's open/closed to the `open` prop and
 // focus the title input on open.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { useBoardStore } from "../store";
 import type { Effort } from "./types";
 import { EFFORT_DOT } from "./effort";
@@ -19,6 +19,9 @@ export function NewTaskModal({ open, onClose }: { open: boolean; onClose: () => 
   const createTask = useBoardStore((s) => s.createTask);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
+  // In-flight guard: a held/double-pressed Enter can fire handleSubmit twice
+  // before the close re-render lands, which would create two tasks.
+  const submittingRef = useRef(false);
 
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -50,16 +53,19 @@ export function NewTaskModal({ open, onClose }: { open: boolean; onClose: () => 
       setBody("");
       setEffort("medium");
       setShowTitleError(false);
+      submittingRef.current = false;
     }
   }, [open]);
 
-  function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!titleValid) {
       setShowTitleError(true);
       titleRef.current?.focus();
       return;
     }
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     void createTask({ title: title.trim(), body, effort });
     onClose();
   }
