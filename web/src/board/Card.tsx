@@ -179,7 +179,12 @@ export function Card({ task }: { task: BoardTask }) {
             title={isAgent ? "agent (unattended)" : "human (attended)"}
             aria-label={isAgent ? "agent task" : "attended task"}
           >
-            <span aria-hidden>{isAgent ? "🤖" : "🙂"}</span>
+            {/* Own compositing layer so the card's hover transform composites
+                this glyph instead of re-rasterizing it each frame — without it
+                the color emoji shimmers/grows during the lift. */}
+            <span aria-hidden className="transform-gpu">
+              {isAgent ? "🤖" : "🙂"}
+            </span>
           </span>
         )}
       </div>
