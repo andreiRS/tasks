@@ -20,6 +20,11 @@ import type { Board, BoardHead, BoardTask } from "./board/types";
 
 export type LoadStatus = "idle" | "loading" | "ready" | "error";
 
+/** Liveness of the SSE stream, independent of `status`. "live" once a frame is
+ *  flowing; "reconnecting" while the stream is down AFTER the board already
+ *  rendered (drives the subtle reconnecting hint, never the hard error screen). */
+export type ConnectionState = "live" | "reconnecting";
+
 /** One in-flight optimistic move, keyed by task uuid in the store map. */
 export interface PendingMove {
   uuid: string;
@@ -50,14 +55,21 @@ interface BoardState {
   /** Head of the most recently applied snapshot. Drives the stale-snapshot
    *  ordering guard: a frame strictly older than this is ignored. */
   appliedHead: BoardHead | null;
+  /** SSE liveness. Flips to "reconnecting" when an established stream drops
+   *  (board still rendered) and back to "live" when a frame arrives again.
+   *  An initial-connect failure does NOT use this — it shows the hard error
+   *  screen via `status === "error"`. */
+  connection: ConnectionState;
 
   /** Fetch the current snapshot from the API and replace store state. A
    *  fallback for when the SSE stream can't connect; the live subscription is
    *  the primary path that keeps the board current. */
   load: () => Promise<void>;
-  /** Open the SSE stream and reconcile every frame through applySnapshot().
-   *  Returns a cleanup that closes the EventSource. Safe under StrictMode's
-   *  double-invoke: the effect's cleanup closes the connection before re-open. */
+  /** Open the SSE stream and reconcile every frame through applySnapshot(),
+   *  running its own self-healing reconnect loop (native auto-retry stalls in
+   *  practice). Returns a cleanup that closes the live EventSource AND clears any
+   *  pending reconnect timer. Safe under StrictMode's double-invoke: the cleanup
+   *  tears everything down before the second setup runs. */
   subscribe: () => () => void;
   /** Replace the board wholesale and re-overlay still-pending writes. The one
    *  reconcile path; SSE, load(), and move()'s fallback all funnel here.
@@ -141,6 +153,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   pending: {},
   toast: null,
   appliedHead: null,
+  connection: "live",
 
   load: async () => {
     set({ status: "loading", error: null });
@@ -155,29 +168,95 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   },
 
   subscribe: () => {
-    // Lazily connect; the server pushes a full snapshot on connect, so the
-    // first frame renders the board (replacing the mount-time load() as the
-    // primary path). Each later frame is a full snapshot too.
-    const source = new EventSource("/api/events");
-    source.onmessage = (ev) => {
-      let snapshot: Board;
-      try {
-        snapshot = JSON.parse(ev.data) as Board;
-      } catch {
-        return; // malformed frame: ignore, the next frame converges.
-      }
-      get().applySnapshot(snapshot);
+    // Self-healing SSE loop. The browser's native EventSource auto-retry stalls
+    // in practice (board goes silently stale on a bounced server), so we drive
+    // reconnection ourselves: on any error we close the stalled source and open
+    // a fresh one after a capped-backoff delay. State machine:
+    //   connect → (message) live, hint cleared, backoff reset
+    //           → (error)   close source, schedule one fresh connect after
+    //                       `delay`, grow delay toward the cap; if the board was
+    //                       already rendered show the subtle reconnecting hint,
+    //                       otherwise show the hard error/retry screen.
+    //   …a later message clears the hint and resets the delay.
+    //
+    // Single-connection / single-timer invariants:
+    //   - `source` holds the one live EventSource; we close() it before opening
+    //     another and null it out, so there is never more than one open stream.
+    //   - `timer` holds the one pending reconnect timeout; scheduleReconnect is a
+    //     no-op while a timer is already armed, so a burst of error events can't
+    //     stack timers or cause a connection storm.
+    //   - `closed` latches on cleanup so any in-flight error/timer callback that
+    //     fires after unmount becomes inert.
+    const RECONNECT_MIN_MS = 1000;
+    const RECONNECT_MAX_MS = 8000;
+
+    let source: EventSource | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let delay = RECONNECT_MIN_MS;
+    let closed = false;
+
+    const connect = () => {
+      if (closed) return;
+      // The server pushes a full snapshot on connect, so the first frame renders
+      // the board; each later frame is a full snapshot too.
+      const es = new EventSource("/api/events");
+      source = es;
+
+      es.onmessage = (ev) => {
+        if (closed) return;
+        let snapshot: Board;
+        try {
+          snapshot = JSON.parse(ev.data) as Board;
+        } catch {
+          return; // malformed frame: ignore, the next frame converges.
+        }
+        // A frame proves the stream is live: clear any reconnecting hint and
+        // reset the backoff so the next drop starts from the minimum delay.
+        delay = RECONNECT_MIN_MS;
+        if (get().connection !== "live") set({ connection: "live" });
+        get().applySnapshot(snapshot);
+      };
+
+      es.onerror = () => {
+        if (closed || source !== es) return; // stale handler from a closed source
+        // Take over from the (stalling) native retry: drop this source and
+        // schedule exactly one fresh connect.
+        es.close();
+        source = null;
+        if (get().status === "ready") {
+          // Established-then-dropped: keep the last board, show the subtle hint.
+          if (get().connection !== "reconnecting") set({ connection: "reconnecting" });
+        } else {
+          // Never rendered: the initial connect failed — hard error/retry UI.
+          set({ status: "error", error: "could not connect to /api/events" });
+        }
+        scheduleReconnect();
+      };
     };
-    // EventSource auto-reconnects on a dropped stream. We must NOT close() on a
-    // transient error or we'd kill that native retry; just surface it if the
-    // board never connected. The reconnect's connect-frame reconciles cleanly
-    // because applySnapshot is idempotent and order-guarded.
-    source.onerror = () => {
-      if (get().status !== "ready") {
-        set({ status: "error", error: "could not connect to /api/events" });
+
+    const scheduleReconnect = () => {
+      if (closed || timer !== null) return; // single pending timer only
+      const wait = delay;
+      delay = Math.min(delay * 2, RECONNECT_MAX_MS); // mild capped backoff
+      timer = setTimeout(() => {
+        timer = null;
+        connect();
+      }, wait);
+    };
+
+    connect();
+
+    return () => {
+      closed = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (source !== null) {
+        source.close();
+        source = null;
       }
     };
-    return () => source.close();
   },
 
   applySnapshot: (board) => {

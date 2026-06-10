@@ -23,16 +23,19 @@ export function App() {
   const board = useBoardStore((s) => s.board);
   const status = useBoardStore((s) => s.status);
   const error = useBoardStore((s) => s.error);
+  const connection = useBoardStore((s) => s.connection);
   const subscribe = useBoardStore((s) => s.subscribe);
   const load = useBoardStore((s) => s.load);
   const move = useBoardStore((s) => s.move);
 
   // Live board via SSE (#20). The stream's connect frame renders the initial
   // board and every committed mutation pushes a fresh full snapshot, so the
-  // board stays current with no refetch. The effect's cleanup closes the
-  // EventSource, which also makes StrictMode's double-invoke safe (the first
-  // run's connection is closed before the second opens) and never leaks or
-  // duplicates connections. EventSource handles reconnect natively on drop.
+  // board stays current with no refetch. subscribe() runs its own self-healing
+  // reconnect loop (native auto-retry stalls), surfacing a subtle "reconnecting"
+  // hint when an established stream drops. The effect's cleanup closes the live
+  // EventSource and clears the pending reconnect timer, which makes StrictMode's
+  // double-invoke safe (the first run is fully torn down before the second sets
+  // up) and never leaks or duplicates a connection or timer.
   useEffect(() => subscribe(), [subscribe]);
 
   // Pointer for mouse/touch/pen; Keyboard for accessible drag (space/enter to
@@ -55,11 +58,26 @@ export function App() {
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-baseline justify-between px-6 pt-5">
           <h1 className="font-script text-3xl text-slate-800">board</h1>
-          {board?.head && (
-            <span className="text-xs text-slate-400">
-              board {timeAgo(board.head.committed_at)}
-            </span>
-          )}
+          <div className="flex items-baseline gap-3">
+            {/* Subtle, non-destructive hint: an established stream dropped and is
+                reconnecting. The last board stays visible (we don't flip to the
+                hard error screen); an initial-connect failure uses the error UI
+                below instead. */}
+            {status === "ready" && connection === "reconnecting" && (
+              <span
+                role="status"
+                className="flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs text-amber-700"
+              >
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                live connection lost — reconnecting…
+              </span>
+            )}
+            {board?.head && (
+              <span className="text-xs text-slate-400">
+                board {timeAgo(board.head.committed_at)}
+              </span>
+            )}
+          </div>
         </header>
 
         {status === "loading" && (
