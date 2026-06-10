@@ -33,6 +33,11 @@ export function Card({ task }: { task: BoardTask }) {
       false,
   );
   const openCard = useBoardStore((s) => s.openCard);
+  const archiveTask = useBoardStore((s) => s.archiveTask);
+
+  // Done cards carry an Archive control to clear them off the board (the done
+  // column fills up). Hidden on placeholders (no real card yet).
+  const isDone = task.column === "done" && !isPlaceholder;
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: task.uuid,
@@ -110,6 +115,26 @@ export function Card({ task }: { task: BoardTask }) {
           <span className="inline-flex items-center rounded-full bg-black/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold tracking-tight text-slate-700">
             #{task.id}
           </span>
+        )}
+
+        {/* Archive — done cards only. Sits right after the id pill. One click
+            archives the task (POST /api/tasks/:id/archive, one commit) and clears
+            it off the board. stopPropagation keeps the click from starting a drag
+            or opening the drawer. */}
+        {isDone && (
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              void archiveTask(task);
+            }}
+            title="Archive (clear off the board)"
+            aria-label={`Archive task #${task.id}`}
+            className="inline-flex items-center rounded-[2px] bg-black/5 px-2 py-0.5 text-[11px] font-medium text-slate-500 ring-1 ring-black/15 transition hover:bg-slate-700 hover:text-white"
+          >
+            Archive
+          </button>
         )}
       </div>
 

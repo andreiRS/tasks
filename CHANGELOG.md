@@ -12,6 +12,12 @@ versions; breaking changes will be called out explicitly here.
 
 ### Added
 
+- Web board: an **Archive** button on every `done` card archives that task in
+  one click, backed by a new `POST /api/tasks/:id/archive` endpoint that reuses
+  the `tasks archive <id>` core (one commit, done-only, `INVALID_COLUMN` for a
+  non-done task). Keeps the done column from filling up without dropping to the
+  terminal.
+
 - Claude Code skill in `skill/` that teaches an agent to track its own
   multi-step work on the board: one task per slice, dependencies wired up,
   cards moved across columns as it goes. Triggers on multi-step jobs and on
