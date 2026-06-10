@@ -52,7 +52,7 @@ class TaskFile {
   column: string;
   private readonly doc: Document;
   /** Everything after the closing `---` delimiter, preserved verbatim. */
-  private readonly bodyRaw: string;
+  private bodyRaw: string;
   private titleChanged = false;
 
   constructor(dir: string, column: string, filename: string, doc: Document, bodyRaw: string) {
@@ -81,6 +81,15 @@ class TaskFile {
   set(key: string, value: unknown): void {
     this.doc.set(key, value);
     if (key === "title") this.titleChanged = true;
+  }
+
+  /**
+   * Replace the task body from a plain string. Stores it with the same
+   * `\n${body}` convention `newTaskFile` uses, so `parseTaskFile` (which strips
+   * exactly one leading newline) round-trips the value unchanged.
+   */
+  setBody(body: string): void {
+    this.bodyRaw = `\n${body}`;
   }
 
   /** The on-disk filename this task should have given its current title. */

@@ -577,3 +577,191 @@ test("POST /api/tasks/:id/move into doing succeeds even with an unresolved block
     srv.stop();
   }
 });
+
+// ─── Behavior 10: PATCH /api/tasks/:id edits title/effort/attendance ──────────
+
+/** A wall clock later than PINNED_NOW, so an updated_at bump is observable. */
+const LATER_NOW = "2026-05-28T10:00:00.000Z";
+
+test("PATCH /api/tasks/:id edits title, effort, attendance in one commit; bumps updated_at; reflected in board", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "old title", { effort: "low", attendance: "attended" });
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const srv = await startServe([], { TASKS_NOW: LATER_NOW });
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/tasks/1`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "new title", effort: "high", attendance: "unattended" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; id: number; uuid: string };
+    expect(body.ok).toBe(true);
+    expect(body.id).toBe(1);
+    expect(typeof body.uuid).toBe("string");
+
+    expect(await countCommits(storeDir)).toBe(before + 1);
+
+    const boardRes = await fetch(`${srv.baseUrl}/api/board`);
+    const board = (await boardRes.json()) as {
+      lanes: Record<string, Array<{ id: number; title: string; effort: string; attendance: string; updated_at: string }>>;
+    };
+    const edited = board.lanes.backlog.find((t) => t.id === 1)!;
+    expect(edited).toBeDefined();
+    expect(edited.title).toBe("new title");
+    expect(edited.effort).toBe("high");
+    expect(edited.attendance).toBe("unattended");
+    expect(edited.updated_at).toBe(LATER_NOW);
+  } finally {
+    srv.stop();
+  }
+});
+
+// ─── Behavior 11: PATCH body edit through the new programmatic core path ──────
+
+test("PATCH /api/tasks/:id replaces body via the new core path in one commit; round-trips on-disk and via board", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task", { body: "old body\n" });
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const newBody = "## Acceptance\n- one\n- two\n";
+
+  const srv = await startServe([], { TASKS_NOW: LATER_NOW });
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/tasks/1`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ body: newBody }),
+    });
+    expect(res.status).toBe(200);
+
+    // Exactly one new commit.
+    expect(await countCommits(storeDir)).toBe(before + 1);
+
+    // Round-trips via the board (same parse convention as create/list).
+    const boardRes = await fetch(`${srv.baseUrl}/api/board`);
+    const board = (await boardRes.json()) as {
+      lanes: Record<string, Array<{ id: number; body: string; updated_at: string }>>;
+    };
+    const edited = board.lanes.backlog.find((t) => t.id === 1)!;
+    expect(edited).toBeDefined();
+    expect(edited.body).toBe(newBody);
+    expect(edited.updated_at).toBe(LATER_NOW);
+
+    // Round-trips on-disk: the file contains the new body verbatim after the
+    // closing frontmatter delimiter (one leading newline, matching `new`).
+    const files = (await Bun.$`ls ${join(storeDir, "backlog")}`.text()).trim().split(/\s+/);
+    const raw = await Bun.file(join(storeDir, "backlog", files[0]!)).text();
+    expect(raw.endsWith(`---\n${newBody}`)).toBe(true);
+  } finally {
+    srv.stop();
+  }
+});
+
+// ─── Behavior 12: PATCH validation — effort/attendance/title/empty ────────────
+
+test("PATCH /api/tasks/:id rejects invalid effort/attendance with correct codes + non-2xx, no commit", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task");
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const srv = await startServe();
+  try {
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ effort: "huge" }, "INVALID_EFFORT"],
+      [{ attendance: "maybe" }, "INVALID_ATTENDANCE"],
+    ];
+    for (const [payload, code] of cases) {
+      const res = await fetch(`${srv.baseUrl}/api/tasks/1`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      expect(res.status).toBe(statusForCode(code));
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      const body = (await res.json()) as { error?: { code?: string } };
+      expect(body.error?.code).toBe(code);
+    }
+    expect(await countCommits(storeDir)).toBe(before);
+  } finally {
+    srv.stop();
+  }
+});
+
+test("PATCH /api/tasks/:id enforces title validation via the Validator (empty/multiline) + no commit", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task");
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const srv = await startServe();
+  try {
+    for (const title of ["", "   ", "line one\nline two"]) {
+      const res = await fetch(`${srv.baseUrl}/api/tasks/1`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title }),
+      });
+      expect(res.status).toBe(statusForCode("INVALID_TITLE"));
+      const body = (await res.json()) as { error?: { code?: string } };
+      expect(body.error?.code).toBe("INVALID_TITLE");
+    }
+    expect(await countCommits(storeDir)).toBe(before);
+  } finally {
+    srv.stop();
+  }
+});
+
+test("PATCH /api/tasks/:id with no editable field is rejected with MISSING_FIELD + no commit", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task");
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const srv = await startServe();
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/tasks/1`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ column: "doing" }),
+    });
+    expect(res.status).toBe(statusForCode("MISSING_FIELD"));
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe("MISSING_FIELD");
+    expect(await countCommits(storeDir)).toBe(before);
+  } finally {
+    srv.stop();
+  }
+});
+
+test("PATCH /api/tasks/:id with an unknown id returns NOT_FOUND + non-2xx, no commit", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "a task");
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const srv = await startServe();
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/tasks/999`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "x" }),
+    });
+    expect(res.status).toBe(statusForCode("NOT_FOUND"));
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe("NOT_FOUND");
+    expect(await countCommits(storeDir)).toBe(before);
+  } finally {
+    srv.stop();
+  }
+});

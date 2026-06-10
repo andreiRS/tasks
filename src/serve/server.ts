@@ -6,8 +6,10 @@ import {
   findArchivedTasks,
   findTask,
   moveTask,
+  setTask,
   TasksError,
   validateTitle,
+  ATTENDANCE_VALUES,
 } from "../store.ts";
 import { computeBlockedBy } from "../render.ts";
 import { buildBoardSnapshot } from "./snapshot.ts";
@@ -44,6 +46,10 @@ export function startBoardServer(opts: ServeOptions): ReturnType<typeof Bun.serv
       const moveMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/move$/);
       if (req.method === "POST" && moveMatch) {
         return handleMove(dir, decodeURIComponent(moveMatch[1]!), req);
+      }
+      const editMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
+      if (req.method === "PATCH" && editMatch) {
+        return handleEdit(dir, decodeURIComponent(editMatch[1]!), req);
       }
       // Route the 404 through the single envelope path (errorResponse) so there
       // is exactly one place that builds the error shape + picks the status.
@@ -174,6 +180,85 @@ async function handleCreate(dir: string, req: Request): Promise<Response> {
     const created = findTask(dir, String(id));
 
     return jsonResponse({ ok: true, id, uuid: created?.uuid ?? null, column: "backlog" }, 201);
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+/**
+ * PATCH /api/tasks/:id — edit a Task's title / body / effort / attendance (any
+ * subset) by reusing the `setTask` core (same flock -> dirty-guard -> Validator
+ * -> commit path as `tasks set`). Body editing uses the new programmatic core
+ * path added in this slice (SetTaskOptions.body + TaskFile.setBody).
+ *
+ * Contract (field names shared with #15 create; `attendance` added here):
+ *   - `:id` is the Short ID (also accepts a UUID, URL-decoded — same as move).
+ *   - request body is JSON `{ title?, body?, effort?, attendance? }`; any subset.
+ *     - Column is NOT editable here (use the move endpoint); deps stay CLI-only.
+ *     - `title`: validated by the core Validator (non-empty, single line, max len).
+ *     - `body`: arbitrary markdown string, replaces the task body verbatim.
+ *     - `effort`: one of low/medium/high. `attendance`: attended/unattended.
+ *   - empty PATCH (no editable field present) is rejected with MISSING_FIELD
+ *     (400): a no-op commit would violate the one-commit-per-edit invariant and
+ *     hide a client bug, so we refuse loudly.
+ *   - success: 200 `{ ok, id, uuid }`. Lean by design — the frontend reconciles
+ *     the full task from the next board/SSE read (mirrors move/create).
+ *   - unknown id: NOT_FOUND (404, from the core). Invalid effort/attendance:
+ *     INVALID_EFFORT / INVALID_ATTENDANCE (400). Invalid title: INVALID_TITLE
+ *     (400). All enforced by the core via setTask.
+ */
+async function handleEdit(dir: string, id: string, req: Request): Promise<Response> {
+  try {
+    let parsed: { title?: unknown; body?: unknown; effort?: unknown; attendance?: unknown };
+    try {
+      parsed = (await req.json()) as typeof parsed;
+    } catch {
+      throw new TasksError("MISSING_FIELD", "request body must be JSON", {});
+    }
+
+    const opts: { title?: string; body?: string; effort?: "low" | "medium" | "high"; attendance?: "attended" | "unattended" } = {};
+
+    if (parsed.title !== undefined) {
+      if (typeof parsed.title !== "string") {
+        throw new TasksError("INVALID_TITLE", "`title` must be a string", { field: "title" });
+      }
+      opts.title = parsed.title;
+    }
+    if (parsed.body !== undefined) {
+      if (typeof parsed.body !== "string") {
+        throw new TasksError("MISSING_FIELD", "`body` must be a string", { field: "body" });
+      }
+      opts.body = parsed.body;
+    }
+    if (parsed.effort !== undefined) {
+      if (typeof parsed.effort !== "string" || !(EFFORT_VALUES as readonly string[]).includes(parsed.effort)) {
+        throw new TasksError("INVALID_EFFORT", `invalid effort value: ${String(parsed.effort)}. Allowed: ${EFFORT_VALUES.join(", ")}`, {
+          value: parsed.effort,
+          allowed: [...EFFORT_VALUES],
+        });
+      }
+      opts.effort = parsed.effort as "low" | "medium" | "high";
+    }
+    if (parsed.attendance !== undefined) {
+      if (typeof parsed.attendance !== "string" || !(ATTENDANCE_VALUES as readonly string[]).includes(parsed.attendance)) {
+        throw new TasksError("INVALID_ATTENDANCE", `invalid attendance value: ${String(parsed.attendance)}. Allowed: ${ATTENDANCE_VALUES.join(", ")}`, {
+          value: parsed.attendance,
+          allowed: [...ATTENDANCE_VALUES],
+        });
+      }
+      opts.attendance = parsed.attendance as "attended" | "unattended";
+    }
+
+    if (Object.keys(opts).length === 0) {
+      throw new TasksError("MISSING_FIELD", "no editable field supplied (title, body, effort, attendance)", {});
+    }
+
+    // Resolve the task first so the response can report id/uuid; the core
+    // re-resolves and is the single source of truth for NOT_FOUND.
+    const before = findTask(dir, id);
+    await setTask(dir, id, opts);
+
+    return jsonResponse({ ok: true, id: before?.id ?? null, uuid: before?.uuid ?? null }, 200);
   } catch (err) {
     return errorResponse(err);
   }
