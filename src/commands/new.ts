@@ -1,4 +1,4 @@
-import { createTask, ensureStore, findAllTasks, findFlockOrFail, storeDir, type EditorRunner, type TaskData } from "../store.ts";
+import { createTask, ensureStore, findAllTasks, findArchivedTasks, findFlockOrFail, storeDir, type EditorRunner, type TaskData } from "../store.ts";
 import { emit, failFromError, outputContext } from "../cli/output.ts";
 import { validateEnumOrExit, validateTitle } from "../cli/validation.ts";
 import { collectRepeated, getFlagValue } from "../cli/args.ts";
@@ -90,7 +90,9 @@ export async function run(rest: string[]): Promise<void> {
   // Resolve --deps refs to UUIDs (need the store to exist for this).
   const resolvedDepUuids: string[] = [];
   if (depRefs.length > 0) {
-    const allTasks = findAllTasks(dir);
+    // Include archived tasks: they are resolvable terminal deps (a new task may
+    // legitimately depend on already-done, archived work).
+    const allTasks = [...findAllTasks(dir), ...findArchivedTasks(dir)];
     const byUuid = new Map(allTasks.map((t: TaskData) => [t.uuid, t]));
     const byId = new Map(allTasks.map((t: TaskData) => [t.id, t]));
     for (const ref of depRefs) {

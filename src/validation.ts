@@ -96,12 +96,20 @@ export function validateEnums(dir: string): void {
  *   - The directed graph (edge: task -> dep) must be acyclic. A self-loop
  *     counts as a cycle. Otherwise: throws TasksError(code=CYCLE_DETECTED).
  *
+ * `extraKnown` lists uuids that are valid dep targets but whose own outgoing
+ * edges are NOT traversed: archived tasks. The board/`next` logic already
+ * treats archived tasks as Complete (terminal) resolvable nodes, so a
+ * live -> archived dep must validate instead of dangling. Passing them here
+ * (rather than as full tasks) makes them resolvable without pulling their own
+ * edges into cycle detection.
+ *
  * Detection: iterative DFS with white/gray/black colors. The first offending
  * uuid (unknown or back-edge target) is surfaced in `details.uuid` for clearer
  * error envelopes.
  */
-export function validateGraph(tasks: TaskData[]): void {
+export function validateGraph(tasks: TaskData[], extraKnown: Iterable<string> = []): void {
   const known = new Set(tasks.map((t) => t.uuid));
+  for (const uuid of extraKnown) known.add(uuid);
 
   // Unknown UUID check across all edges.
   for (const t of tasks) {

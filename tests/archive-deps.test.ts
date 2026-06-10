@@ -84,6 +84,35 @@ test("tasks show: renders an archived dep as #id title (not <unknown>)", async (
   expect(show.stdout).not.toContain("<unknown>");
 });
 
+test("tasks link: a new edge succeeds even when the subject already depends on an archived task", async () => {
+  // Repro of the validator catch-22: link D -> B (B in done), archive B, then
+  // any later graph mutation rebuilt the DAG from LIVE tasks only and threw
+  // UNKNOWN_UUID on D's now-archived dep. The validator must count archived
+  // tasks as resolvable (terminal) nodes.
+  const blockerId = await newId("blocker");
+  await runTasks(["mv", String(blockerId), "done"]);
+  const dependentId = await newId("dependent");
+  await runTasks(["link", String(dependentId), "--depends-on", String(blockerId)]);
+  await runTasks(["archive", String(blockerId)]);
+
+  // A brand-new, unrelated edge on the dependent must not be blocked by the
+  // pre-existing archived dep.
+  const otherId = await newId("other");
+  const link = await runTasks(["link", String(dependentId), "--depends-on", String(otherId)]);
+  expect(link.stderr).toBe("");
+  expect(link.exitCode).toBe(0);
+});
+
+test("tasks new --deps: can depend on an archived task", async () => {
+  const blockerId = await newId("archived blocker");
+  await runTasks(["mv", String(blockerId), "done"]);
+  await runTasks(["archive", String(blockerId)]);
+
+  const create = await runTasks(["new", "depends on archived", "--deps", String(blockerId)]);
+  expect(create.stderr).toBe("");
+  expect(create.exitCode).toBe(0);
+});
+
 test("tasks list: an archived blocker does NOT produce a [blocked by] marker", async () => {
   const blockerId = await newId("blocker");
   await runTasks(["mv", String(blockerId), "done"]);
