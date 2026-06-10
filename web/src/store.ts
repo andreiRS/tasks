@@ -1,11 +1,16 @@
 // Board snapshot store (Zustand). Holds the latest board snapshot plus the
-// optimistic-write overlay introduced in #19 (drag-to-move).
+// optimistic-write overlay introduced in #19 (drag-to-move), extended by the
+// create modal (#21) and the card-drawer edit (#22).
 //
 // Write model (see docs/specs/serve-board-write-interaction.md):
 //   - move() applies the lane change optimistically, fires POST /api/tasks/:id/move,
 //     then lets the SSE broadcast frame reconcile through applySnapshot(). There
 //     is no success-path refetch (#20): the commit's snapshot clears the pending
 //     write, and a manual refetch would only risk clobbering a newer frame.
+//   - createTask() and editTask() follow the same shape: optimistic apply, fire
+//     the POST/PATCH (edit sends only the changed fields), reconcile from the
+//     next snapshot, snap back on failure. Selection state (selectedUuid +
+//     openCard/closeCard) drives the drawer the edit is dispatched from.
 //   - A pending write is tracked per task uuid; its 200ms delay timer flips the
 //     card to the "saving…" look only if the write is genuinely slow. It also
 //     records the board head it was issued against, so reconciliation can tell a
@@ -16,7 +21,7 @@
 //   - A failed move snaps the card back and raises a toast carrying the code.
 
 import { create } from "zustand";
-import type { Board, BoardHead, BoardTask, Effort } from "./board/types";
+import type { Attendance, Board, BoardHead, BoardTask, Effort } from "./board/types";
 
 export type LoadStatus = "idle" | "loading" | "ready" | "error";
 
@@ -59,6 +64,33 @@ export interface PendingCreate {
   uuid: string | null;
 }
 
+/** The editable subset of a Task's fields (drawer edit; #22). Column is moved
+ *  via the move endpoint and deps stay CLI-only, so neither is editable here. */
+export interface EditableFields {
+  title?: string;
+  body?: string;
+  effort?: Effort;
+  attendance?: Attendance;
+}
+
+/** One in-flight optimistic edit, keyed by task uuid in the store map. Mirrors
+ *  PendingMove: it records the head the edit was issued against (so a snapshot
+ *  post-dating it can confirm), the 200ms delay flag, and the PRE-edit field
+ *  values used to snap the card back if the PATCH fails. */
+export interface PendingEdit {
+  uuid: string;
+  /** The changed fields' NEW values (the optimistic apply). Re-overlaid onto a
+   *  wholesale-replaced board while still pending, so they don't flash to old
+   *  values before the confirming frame. */
+  patch: EditableFields;
+  /** The card's field values before the optimistic apply, for snap-back. */
+  prevFields: EditableFields;
+  /** Becomes true once the 200ms delay timer fires (drives the pending look). */
+  showPending: boolean;
+  /** Head the edit was issued against; a snapshot post-dating it reconciles. */
+  issuedHead: BoardHead | null;
+}
+
 /** Minimal toast slice for #19. #23 generalizes the write-failure UX. */
 export interface Toast {
   code: string;
@@ -73,6 +105,12 @@ interface BoardState {
   pending: Record<string, PendingMove>;
   /** Pending creates keyed by temporary client key. */
   pendingCreates: Record<string, PendingCreate>;
+  /** Pending edits keyed by task uuid. */
+  pendingEdits: Record<string, PendingEdit>;
+  /** uuid of the card whose drawer is open, or null when closed (#22). The
+   *  drawer reads the LIVE card from `board` by this uuid each render, so
+   *  reconciled SSE updates flow through and a confirmed edit shows its values. */
+  selectedUuid: string | null;
   toast: Toast | null;
   /** Head of the most recently applied snapshot. Drives the stale-snapshot
    *  ordering guard: a frame strictly older than this is ignored. */
@@ -102,6 +140,13 @@ interface BoardState {
   /** Optimistically create a task in `backlog`, persist via POST /api/tasks,
    *  then let the SSE snapshot reconcile (drop the placeholder). */
   createTask: (input: { title: string; body: string; effort: Effort }) => Promise<void>;
+  /** Optimistically edit a task's title/body/effort/attendance, PATCH the
+   *  changed fields, then let the SSE snapshot reconcile (mirrors move/create). */
+  editTask: (task: BoardTask, patch: EditableFields) => Promise<void>;
+  /** Open the detail drawer for `uuid` (#22). */
+  openCard: (uuid: string) => void;
+  /** Close the detail drawer (#22). */
+  closeCard: () => void;
   dismissToast: () => void;
 }
 
@@ -171,6 +216,11 @@ function moveCardBetweenLanes(board: Board, uuid: string, toCol: string): Board 
   return { ...board, lanes };
 }
 
+/** Every task on a board, flattened across its lanes (canonical column order). */
+function everyTask(b: Board): BoardTask[] {
+  return b.columns.flatMap((c) => b.lanes[c] ?? []);
+}
+
 /** New tasks always land in `backlog`, attended (server contract). */
 const BACKLOG = "backlog";
 
@@ -203,12 +253,28 @@ function applyOptimisticCreate(board: Board, p: PendingCreate): Board {
   return { ...board, lanes };
 }
 
+/** Apply `patch` to the card found by `uuid` in place (same lane, same order),
+ *  in a fresh lanes map. Used for the optimistic edit and to re-overlay a still-
+ *  pending edit's fields onto a wholesale-replaced board. Returns the board
+ *  unchanged if the uuid isn't present. */
+function applyOptimisticEdit(board: Board, uuid: string, patch: EditableFields): Board {
+  const lanes: Record<string, BoardTask[]> = {};
+  for (const col of board.columns) {
+    lanes[col] = (board.lanes[col] ?? []).map((t) =>
+      t.uuid === uuid ? { ...t, ...patch } : t,
+    );
+  }
+  return { ...board, lanes };
+}
+
 export const useBoardStore = create<BoardState>((set, get) => ({
   board: null,
   status: "idle",
   error: null,
   pending: {},
   pendingCreates: {},
+  pendingEdits: {},
+  selectedUuid: null,
   toast: null,
   appliedHead: null,
   connection: "live",
@@ -368,8 +434,6 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     // is in the snapshot we drop the placeholder — the snapshot card takes over.
     const { pendingCreates } = get();
     const nextPendingCreates: Record<string, PendingCreate> = {};
-    const everyTask = (b: Board): BoardTask[] =>
-      b.columns.flatMap((c) => b.lanes[c] ?? []);
     for (const p of Object.values(pendingCreates)) {
       const postDates =
         board.head != null &&
@@ -395,6 +459,31 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       clearDelayTimer(p.tempKey);
     }
 
+    // (6c) Reconcile pending edits the same way. An edit is resolved by any
+    // snapshot whose head is a different commit than the head the edit was
+    // issued against (sha-inequality post-dating, like moves — committed_at is
+    // second-granularity and a same-second commit ties on time but differs on
+    // sha). A post-dating snapshot CONFIRMS the edit: its fields are
+    // authoritative and already correct, so we just clear the timer and drop the
+    // pending edit — never field-merge a confirmed edit, the snapshot wins
+    // verbatim. While still pending (no post-dating frame yet) we keep the edit
+    // so its optimistic fields can be re-overlaid below.
+    const { pendingEdits } = get();
+    const nextPendingEdits: Record<string, PendingEdit> = {};
+    for (const p of Object.values(pendingEdits)) {
+      const postDates =
+        board.head != null &&
+        (p.issuedHead == null || board.head.sha !== p.issuedHead.sha);
+      if (!postDates) {
+        // Snapshot doesn't yet reflect a commit after this edit — still in
+        // flight/committing. Keep the optimistic overlay.
+        nextPendingEdits[p.uuid] = p;
+        continue;
+      }
+      // Confirmed by a post-dating commit. The snapshot's fields are truth.
+      clearDelayTimer(p.uuid);
+    }
+
     // Re-overlay still-pending create placeholders onto the replaced board.
     // Unlike a move (whose card already exists in the snapshot, just in another
     // lane), a create's card does NOT exist in any snapshot until its commit, so
@@ -406,11 +495,28 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     for (const p of Object.values(nextPendingCreates)) {
       nextBoard = applyOptimisticCreate(nextBoard, p);
     }
+    // Re-overlay still-pending edits' optimistic fields by uuid onto the
+    // replaced board (exactly like pending creates above). The card already
+    // exists in the snapshot, but a pre-dating frame (a different commit, e.g.
+    // an unrelated mutation) would otherwise show its OLD field values until the
+    // confirming commit lands. Confirmed edits aren't here — they were dropped
+    // from nextPendingEdits above — so this never overrides an authoritative
+    // snapshot value.
+    for (const p of Object.values(nextPendingEdits)) {
+      nextBoard = applyOptimisticEdit(nextBoard, p.uuid, p.patch);
+    }
+
+    // If the open drawer's card is gone from the (reconciled) board, close it —
+    // a placeholder uuid still in pendingCreates keeps the drawer eligible.
+    const selectedStillPresent =
+      everyTask(nextBoard).some((t) => t.uuid === get().selectedUuid);
 
     set((s) => ({
       board: nextBoard,
       pending: nextPending,
       pendingCreates: nextPendingCreates,
+      pendingEdits: nextPendingEdits,
+      selectedUuid: s.selectedUuid != null && selectedStillPresent ? s.selectedUuid : null,
       status: "ready",
       error: null,
       appliedHead: board.head,
@@ -600,6 +706,114 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     }
   },
 
+  editTask: async (task, patch) => {
+    const board = get().board;
+    if (!board) return;
+
+    // 1. Build the patch from CHANGED fields only (compare against the task as
+    //    passed, which is the live card the drawer read). An empty patch fires
+    //    NO request — just return — so we never trip the server's MISSING_FIELD
+    //    (a no-op edit is a closed edit, not an error).
+    const changed: EditableFields = {};
+    if (patch.title !== undefined && patch.title !== task.title) changed.title = patch.title;
+    if (patch.body !== undefined && patch.body !== task.body) changed.body = patch.body;
+    if (patch.effort !== undefined && patch.effort !== task.effort) changed.effort = patch.effort;
+    if (patch.attendance !== undefined && patch.attendance !== task.attendance)
+      changed.attendance = patch.attendance;
+    if (Object.keys(changed).length === 0) return;
+
+    // 2. Guard: one in-flight write per card. A pending move OR pending edit on
+    //    this uuid means a second write would double-write the card and orphan
+    //    the first request — ignore until it resolves (mirrors move()).
+    if (get().pending[task.uuid] || get().pendingEdits[task.uuid]) return;
+
+    // The pre-edit values for snap-back, captured from the same live card.
+    const prevFields: EditableFields = {};
+    if ("title" in changed) prevFields.title = task.title;
+    if ("body" in changed) prevFields.body = task.body;
+    if ("effort" in changed) prevFields.effort = task.effort;
+    if ("attendance" in changed) prevFields.attendance = task.attendance;
+
+    // Head the write is issued against; reconciliation only lets a snapshot that
+    // post-dates this head confirm the edit.
+    const issuedHead = board.head;
+
+    // 3. Optimistic apply — the card's fields update in place across its lane.
+    set({ board: applyOptimisticEdit(board, task.uuid, changed) });
+
+    // Track the pending edit + start the 200ms delay-gate timer (a fast edit
+    // confirms via SSE before this fires and never flashes pending).
+    const edit: PendingEdit = {
+      uuid: task.uuid,
+      patch: changed,
+      prevFields,
+      showPending: false,
+      issuedHead,
+    };
+    set((s) => ({ pendingEdits: { ...s.pendingEdits, [task.uuid]: edit } }));
+    clearDelayTimer(task.uuid);
+    delayTimers.set(
+      task.uuid,
+      setTimeout(() => {
+        delayTimers.delete(task.uuid);
+        set((s) => {
+          const p = s.pendingEdits[task.uuid];
+          if (!p) return s; // already confirmed/failed
+          return { pendingEdits: { ...s.pendingEdits, [task.uuid]: { ...p, showPending: true } } };
+        });
+      }, PENDING_DELAY_MS),
+    );
+
+    // 4. Persist the changed fields. On success we do NOT refetch: the commit's
+    //    SSE frame post-dates this write and reconciles it (drops the pending
+    //    edit), same as move()/createTask().
+    try {
+      const res = await fetch(`/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(changed),
+      });
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => null)) as
+          | { error?: { code?: string; message?: string } }
+          | null;
+        const code = errBody?.error?.code ?? `HTTP_${res.status}`;
+        const message = errBody?.error?.message ?? `edit failed (${res.status})`;
+        throw new EditError(code, message);
+      }
+      // Success: leave the pending overlay in place; the SSE frame clears it.
+    } catch (err) {
+      // 5. Failure — snap the card's fields back, clear pending, toast the code.
+      clearDelayTimer(task.uuid);
+      const code = err instanceof EditError ? err.code : "TRANSPORT_ERROR";
+      const message = err instanceof Error ? err.message : String(err);
+      set((s) => {
+        const { [task.uuid]: _dropped, ...rest } = s.pendingEdits;
+        const current = s.board;
+        // Snap back ONLY if the card still holds our optimistic values. If a
+        // newer authoritative snapshot already superseded the edit, leave the
+        // board — the snapshot won (mirrors move()'s stillOptimistic caution).
+        const card = current
+          ? everyTask(current).find((t) => t.uuid === task.uuid)
+          : undefined;
+        const stillOptimistic =
+          card != null &&
+          (changed.title === undefined || card.title === changed.title) &&
+          (changed.body === undefined || card.body === changed.body) &&
+          (changed.effort === undefined || card.effort === changed.effort) &&
+          (changed.attendance === undefined || card.attendance === changed.attendance);
+        const snappedBack =
+          current && stillOptimistic
+            ? applyOptimisticEdit(current, task.uuid, prevFields)
+            : current;
+        return { board: snappedBack, pendingEdits: rest, toast: { code, message } };
+      });
+    }
+  },
+
+  openCard: (uuid) => set({ selectedUuid: uuid }),
+  closeCard: () => set({ selectedUuid: null }),
+
   dismissToast: () => set({ toast: null }),
 }));
 
@@ -622,5 +836,16 @@ class CreateError extends Error {
   ) {
     super(message);
     this.name = "CreateError";
+  }
+}
+
+/** Same shape as MoveError, for the drawer-edit write path. */
+class EditError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "EditError";
   }
 }

@@ -24,11 +24,16 @@ export function Card({ task }: { task: BoardTask }) {
 
   // Pending look only once the 200ms delay gate has fired (slow writes only).
   // A move tracks under `pending` (by uuid); a create under `pendingCreates`
-  // (keyed by its temp key, which is the placeholder's uuid).
+  // (keyed by its temp key, which is the placeholder's uuid); an edit under
+  // `pendingEdits` (by uuid).
   const showPending = useBoardStore(
     (s) =>
-      s.pending[task.uuid]?.showPending ?? s.pendingCreates[task.uuid]?.showPending ?? false,
+      s.pending[task.uuid]?.showPending ??
+      s.pendingEdits[task.uuid]?.showPending ??
+      s.pendingCreates[task.uuid]?.showPending ??
+      false,
   );
+  const openCard = useBoardStore((s) => s.openCard);
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: task.uuid,
@@ -43,6 +48,13 @@ export function Card({ task }: { task: BoardTask }) {
       ref={setNodeRef}
       {...listeners}
       {...attributes}
+      // A plain click (under the 8px PointerSensor activation distance set in
+      // App.tsx) opens the drawer; a real drag passes the threshold and moves
+      // instead, so onClick never fires for it. Placeholders have no real card
+      // to show yet.
+      onClick={() => {
+        if (!isPlaceholder) openCard(task.uuid);
+      }}
       className={`relative touch-none rounded-[3px] px-3.5 pt-3 pb-2.5 text-slate-800 shadow-[2px_3px_6px_rgba(0,0,0,0.18)] transition-transform duration-150 hover:-translate-y-0.5 hover:rotate-0 ${
         isPlaceholder ? "cursor-default" : "cursor-grab active:cursor-grabbing"
       }`}

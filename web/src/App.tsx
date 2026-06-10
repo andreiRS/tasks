@@ -18,6 +18,7 @@ import { Rail } from "./board/Rail";
 import { Board } from "./board/Board";
 import { Toast } from "./board/Toast";
 import { NewTaskModal } from "./board/NewTaskModal";
+import { CardDrawer } from "./board/CardDrawer";
 import { timeAgo } from "./board/time";
 
 export function App() {
@@ -41,8 +42,13 @@ export function App() {
   useEffect(() => subscribe(), [subscribe]);
 
   // Pointer for mouse/touch/pen; Keyboard for accessible drag (space/enter to
-  // grab, arrows to move, space/enter to drop) — see dnd-kit v6 sensors.
-  const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor));
+  // grab, arrows to move, space/enter to drop) — see dnd-kit v6 sensors. The
+  // 8px activation distance means a plain click (under threshold) is NOT a drag,
+  // so a card's onClick can open the drawer (#22) while a real drag still moves.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor),
+  );
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -116,6 +122,7 @@ export function App() {
       </main>
 
       <NewTaskModal open={showNewTask} onClose={() => setShowNewTask(false)} />
+      <CardDrawer />
       <Toast />
     </div>
   );
