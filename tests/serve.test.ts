@@ -1,10 +1,35 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, realpathSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COLUMNS } from "../src/store.ts";
 import { statusForCode } from "../src/serve/server.ts";
 import { isIgnoredWatchPath } from "../src/serve/live.ts";
+
+/** Repo root (this file lives in tests/). */
+const REPO_ROOT = join(import.meta.dir, "..");
+/** Built Vite output that the asset-serving seam reads via TASKS_WEB_DIST. */
+const WEB_DIST = join(REPO_ROOT, "web", "dist");
+
+/**
+ * Ensure `web/dist` exists for the asset-serving tests. The full prod path
+ * (embedded into the compiled binary) is verified manually (see web/README.md)
+ * because a `bun build --compile` per test run would be slow/flaky; the seam
+ * itself is exercised here against a real Vite build via the TASKS_WEB_DIST
+ * affordance (same route/content-type/fallback code path as embedded).
+ */
+async function ensureWebDist(): Promise<void> {
+  if (existsSync(join(WEB_DIST, "index.html"))) return;
+  const proc = Bun.spawn(["bun", "run", "build"], {
+    cwd: join(REPO_ROOT, "web"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const code = await proc.exited;
+  if (code !== 0) {
+    throw new Error(`web build failed: ${await new Response(proc.stderr).text()}`);
+  }
+}
 
 let tasksHome: string;
 let cwdDir: string;
@@ -1079,6 +1104,127 @@ test("PATCH /api/tasks/:id with an unknown id returns NOT_FOUND + non-2xx, no co
     const body = (await res.json()) as { error?: { code?: string } };
     expect(body.error?.code).toBe("NOT_FOUND");
     expect(await countCommits(storeDir)).toBe(before);
+  } finally {
+    srv.stop();
+  }
+});
+
+// ─── Asset-serving seam (issue #25) ──────────────────────────────────────────
+//
+// In dev there are no embedded assets (Vite fronts the UI and proxies /api), so
+// `serve` serves API only. In the compiled binary the built SPA is embedded and
+// served on every non-/api route. These tests exercise the seam against a real
+// Vite build via TASKS_WEB_DIST, which runs the SAME code path as embedded.
+
+test("with built assets present: GET / returns the SPA shell as text/html", async () => {
+  await ensureWebDist();
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  await commitStore(storeDir);
+
+  const srv = await startServe([], { TASKS_WEB_DIST: WEB_DIST });
+  try {
+    const res = await fetch(`${srv.baseUrl}/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type") ?? "").toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain('<div id="root"></div>');
+    // The shell references a hashed JS bundle (proves it's the built output).
+    expect(html).toMatch(/\/assets\/index-[\w-]+\.js/);
+  } finally {
+    srv.stop();
+  }
+});
+
+test("with built assets present: GET /assets/<hashed>.js and .css serve with correct content-type", async () => {
+  await ensureWebDist();
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  await commitStore(storeDir);
+
+  const assetNames = readdirSync(join(WEB_DIST, "assets"));
+  const jsName = assetNames.find((n) => n.endsWith(".js"))!;
+  const cssName = assetNames.find((n) => n.endsWith(".css"))!;
+
+  const srv = await startServe([], { TASKS_WEB_DIST: WEB_DIST });
+  try {
+    const js = await fetch(`${srv.baseUrl}/assets/${jsName}`);
+    expect(js.status).toBe(200);
+    expect(js.headers.get("content-type") ?? "").toContain("javascript");
+    expect((await js.text()).length).toBeGreaterThan(0);
+
+    const css = await fetch(`${srv.baseUrl}/assets/${cssName}`);
+    expect(css.status).toBe(200);
+    expect(css.headers.get("content-type") ?? "").toContain("text/css");
+  } finally {
+    srv.stop();
+  }
+});
+
+test("with built assets present: unknown non-/api route falls back to index.html (SPA)", async () => {
+  await ensureWebDist();
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  await commitStore(storeDir);
+
+  const srv = await startServe([], { TASKS_WEB_DIST: WEB_DIST });
+  try {
+    const res = await fetch(`${srv.baseUrl}/board/some/deep/client-route`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type") ?? "").toContain("text/html");
+    expect(await res.text()).toContain('<div id="root"></div>');
+  } finally {
+    srv.stop();
+  }
+});
+
+test("with built assets present: a missing /assets/<file> 404s (not SPA-fallen-back)", async () => {
+  await ensureWebDist();
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  await commitStore(storeDir);
+
+  const srv = await startServe([], { TASKS_WEB_DIST: WEB_DIST });
+  try {
+    const res = await fetch(`${srv.baseUrl}/assets/does-not-exist-abc123.js`);
+    expect(res.status).toBe(404);
+  } finally {
+    srv.stop();
+  }
+});
+
+test("with built assets present: /api/* still behaves (board JSON), not the SPA shell", async () => {
+  await ensureWebDist();
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "doing", 1, "wired");
+  await commitStore(storeDir);
+
+  const srv = await startServe([], { TASKS_WEB_DIST: WEB_DIST });
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/board`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type") ?? "").toContain("application/json");
+    const body = (await res.json()) as { lanes: Record<string, Array<{ id: number }>> };
+    expect(body.lanes.doing.map((t) => t.id)).toEqual([1]);
+  } finally {
+    srv.stop();
+  }
+});
+
+test("without built assets (dev): unknown non-/api route 404s and /api still works", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  await commitStore(storeDir);
+
+  // No TASKS_WEB_DIST and running from source => no embedded assets (dev mode).
+  const srv = await startServe();
+  try {
+    const root = await fetch(`${srv.baseUrl}/`);
+    expect(root.status).toBe(404);
+
+    const api = await fetch(`${srv.baseUrl}/api/board`);
+    expect(api.status).toBe(200);
   } finally {
     srv.stop();
   }

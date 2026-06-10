@@ -14,6 +14,7 @@ import {
 import { computeBlockedBy } from "../render.ts";
 import { buildBoardSnapshot, type BoardSnapshot } from "./snapshot.ts";
 import { createLiveSync } from "./live.ts";
+import { loadAssets, contentTypeFor, type AssetBundle } from "./assets.ts";
 
 export interface ServeOptions {
   dir: string;
@@ -30,7 +31,7 @@ export interface ServeOptions {
  * to the standard HTTP error envelope and NEVER call `process.exit`, so a
  * core error returns a non-2xx response while the server stays alive.
  */
-export function startBoardServer(opts: ServeOptions): ReturnType<typeof Bun.serve> {
+export async function startBoardServer(opts: ServeOptions): Promise<ReturnType<typeof Bun.serve>> {
   const { dir } = opts;
 
   // Live sync (issue #17 / decision #24): a single shared fs.watch on the Store
@@ -38,6 +39,11 @@ export function startBoardServer(opts: ServeOptions): ReturnType<typeof Bun.serv
   // snapshot to every connected SSE client. See src/serve/live.ts. We pass
   // `readSnapshot` so SSE frames are byte-identical to a GET /api/board read.
   const { handleEvents } = createLiveSync(dir, readSnapshot);
+
+  // Asset-serving seam (issue #25, see src/serve/assets.ts): in the compiled
+  // binary this is the embedded Vite SPA; in dev it is `null` (Vite dev server
+  // fronts the UI and proxies /api here). Resolved once at boot.
+  const assets = await loadAssets();
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -61,6 +67,14 @@ export function startBoardServer(opts: ServeOptions): ReturnType<typeof Bun.serv
       if (req.method === "PATCH" && editMatch) {
         return handleEdit(dir, decodeURIComponent(editMatch[1]!), req);
       }
+
+      // Non-/api routes: serve the SPA when assets are present (prod binary).
+      // Everything under /api that did not match above is a real 404 and must
+      // NOT fall back to the SPA shell.
+      if (assets && !url.pathname.startsWith("/api/") && req.method === "GET") {
+        return serveAsset(assets, url.pathname);
+      }
+
       // Route the 404 through the single envelope path (errorResponse) so there
       // is exactly one place that builds the error shape + picks the status.
       return errorResponse(new TasksError("NOT_FOUND", "no such route", { path: url.pathname }));
@@ -281,6 +295,37 @@ async function handleEdit(dir: string, id: string, req: Request): Promise<Respon
   } catch (err) {
     return errorResponse(err);
   }
+}
+
+/**
+ * Serve a non-/api route from the built SPA bundle (prod binary). The rules:
+ *
+ *   - "/" → the SPA shell (index.html), text/html.
+ *   - "/assets/<hashed-file>" → the matching built artifact with its content
+ *     type; if no such artifact exists, a real 404 (a missing hashed asset is a
+ *     bug, not a client route — never SPA-fall-back, or the browser would get
+ *     HTML where it expected JS/CSS and fail silently).
+ *   - any other GET (e.g. "/board/123") → SPA fallback to index.html, so the
+ *     client router owns deep links. This is a single-binary localhost board,
+ *     so caching headers are intentionally omitted.
+ */
+function serveAsset(assets: AssetBundle, pathname: string): Response {
+  if (pathname === "/" || pathname === "/index.html") {
+    return new Response(assets.indexHtml, {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }
+  if (pathname.startsWith("/assets/")) {
+    const blob = assets.assets.get(pathname);
+    if (!blob) {
+      return errorResponse(new TasksError("NOT_FOUND", "no such asset", { path: pathname }));
+    }
+    return new Response(blob, { headers: { "content-type": contentTypeFor(pathname) } });
+  }
+  // SPA fallback: unknown non-asset route renders the shell, client router takes over.
+  return new Response(assets.indexHtml, {
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
 }
 
 /**

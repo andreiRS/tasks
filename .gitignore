@@ -6,3 +6,10 @@ dist/
 .env.local
 bun.lock
 .claude/worktrees/
+
+# Frontend build artifacts (web/dist matched by dist/ above; be explicit).
+web/dist/
+# Generated asset-embedding module (derived from web/dist at build time; see
+# scripts/gen-web-assets.ts). Never committed — it references content-hashed
+# build output and only exists during `bun run build:binary`.
+src/serve/web-assets.generated.ts

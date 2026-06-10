@@ -38,7 +38,7 @@ export async function run(rest: string[]): Promise<void> {
   }
 
   const { startBoardServer } = await import("../serve/server.ts");
-  startBoardServer({ dir, port });
+  await startBoardServer({ dir, port });
 
   // Long-running: never resolve, so the CLI's post-handler `process.exit(0)`
   // never runs and the server keeps listening until the process is killed.
