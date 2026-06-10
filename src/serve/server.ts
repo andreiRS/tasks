@@ -1,6 +1,7 @@
 import {
   COLUMNS,
   EFFORT_VALUES,
+  archiveTasks,
   createTask,
   findAllTasks,
   findArchivedTasks,
@@ -119,6 +120,10 @@ export async function startBoardServer(opts: ServeOptions): Promise<ReturnType<t
       if (req.method === "POST" && moveMatch) {
         return handleMove(dir, decodeURIComponent(moveMatch[1]!), req);
       }
+      const archiveMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/archive$/);
+      if (req.method === "POST" && archiveMatch) {
+        return handleArchive(dir, decodeURIComponent(archiveMatch[1]!));
+      }
       const editMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
       if (req.method === "PATCH" && editMatch) {
         return handleEdit(dir, decodeURIComponent(editMatch[1]!), req);
@@ -227,6 +232,33 @@ async function handleMove(dir: string, id: string, req: Request): Promise<Respon
 
     return jsonResponse(
       { ok: true, id: before?.id ?? null, uuid: before?.uuid ?? null, from: before?.column ?? null, to: column },
+      200,
+    );
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+/**
+ * POST /api/tasks/:id/archive — archive a single done Task by reusing the
+ * `archiveTasks` core (same flock -> dirty-guard -> commit path as
+ * `tasks archive <id>`).
+ *
+ * Contract:
+ *   - `:id` is the Short ID (also accepts a UUID, same as `tasks archive`).
+ *   - no request body.
+ *   - success: 200 `{ ok, archived: [{ id, uuid, title }] }`. The frontend
+ *     reconciles the board from SSE; the archived task drops out of the lanes.
+ *   - non-done task: INVALID_COLUMN (400, from the core — only done/ archives).
+ *   - unknown id: NOT_FOUND (404, from the core).
+ *   - no DEP_EXISTS guard: a still-depended-on done task archives cleanly (the
+ *     archived dep counts as Complete), matching `tasks archive`.
+ */
+async function handleArchive(dir: string, id: string): Promise<Response> {
+  try {
+    const { archived } = await archiveTasks(dir, { idOrUuid: id });
+    return jsonResponse(
+      { ok: true, archived: archived.map((t) => ({ id: t.id, uuid: t.uuid, title: t.title })) },
       200,
     );
   } catch (err) {
