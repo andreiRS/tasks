@@ -189,14 +189,21 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     if (compareHeads(board.head, appliedHead) < 0) return;
 
     // (6) Reconcile pending writes against THIS snapshot. A pending write is
-    // resolved only by a snapshot that post-dates the write's commit (its head
-    // strictly newer than the head the write was issued against); a snapshot
-    // that pre-dates or is concurrent with the write keeps the overlay.
+    // resolved by any snapshot whose head is a different commit than the head
+    // the write was issued against. We test post-dating by sha inequality, not
+    // by committed_at: %cI is second-granularity, so a move that commits in the
+    // same wall-clock second as its issuedHead has an EQUAL timestamp on a
+    // distinct sha, and a strict-time compare would never clear it (stuck ◷
+    // badge). The stale-snapshot guard above already dropped anything strictly
+    // older than appliedHead, and history is linear, so any frame reaching here
+    // with a head sha != issuedHead's sha is a genuine at-or-after commit.
     const { pending } = get();
     const nextPending: Record<string, PendingMove> = {};
     let discardedOwnWrite = false;
     for (const p of Object.values(pending)) {
-      const postDates = compareHeads(board.head, p.issuedHead) > 0;
+      const postDates =
+        board.head != null &&
+        (p.issuedHead == null || board.head.sha !== p.issuedHead.sha);
       if (!postDates) {
         // Snapshot doesn't yet reflect a commit after this write — the write
         // may still be in flight/committing. Keep the optimistic overlay.
