@@ -618,6 +618,99 @@ test("POST /api/tasks/:id/move with an invalid column returns INVALID_COLUMN + n
   }
 });
 
+// ─── Behavior 8b: POST /api/tasks/:id/archive archives a done Task ───────────
+
+test("POST /api/tasks/:id/archive moves a done task to archive in one commit; gone from board", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "done", 1, "finished task");
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const srv = await startServe();
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/tasks/1/archive`, { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; archived: Array<{ id: number }> };
+    expect(body.ok).toBe(true);
+    expect(body.archived.map((t) => t.id)).toEqual([1]);
+
+    // Exactly one new commit (same single-commit invariant as `tasks archive`).
+    expect(await countCommits(storeDir)).toBe(before + 1);
+
+    // Gone from the live board, moved to archive/ on disk.
+    const board = (await (await fetch(`${srv.baseUrl}/api/board`)).json()) as {
+      lanes: Record<string, Array<{ id: number }>>;
+    };
+    expect(board.lanes.done.map((t) => t.id)).not.toContain(1);
+    expect(existsSync(join(storeDir, "archive"))).toBe(true);
+    expect(readdirSync(join(storeDir, "archive")).some((f) => f.startsWith("1-"))).toBe(true);
+  } finally {
+    srv.stop();
+  }
+});
+
+test("POST /api/tasks/:id/archive on a non-done task returns INVALID_COLUMN, no commit", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "doing", 1, "still going");
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const srv = await startServe();
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/tasks/1/archive`, { method: "POST" });
+    expect(res.status).toBe(statusForCode("INVALID_COLUMN"));
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe("INVALID_COLUMN");
+    expect(await countCommits(storeDir)).toBe(before);
+  } finally {
+    srv.stop();
+  }
+});
+
+test("POST /api/tasks/:id/archive with an unknown id returns NOT_FOUND, no commit", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "done", 1, "finished task");
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const srv = await startServe();
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/tasks/999/archive`, { method: "POST" });
+    expect(res.status).toBe(statusForCode("NOT_FOUND"));
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe("NOT_FOUND");
+    expect(await countCommits(storeDir)).toBe(before);
+  } finally {
+    srv.stop();
+  }
+});
+
+test("POST /api/tasks/:id/archive succeeds when a live task still depends on the target (no guard)", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "done", 1, "done blocker");
+  plantTask(storeDir, "doing", 2, "depends on it", { deps: [1] });
+  await commitStore(storeDir);
+
+  const srv = await startServe();
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/tasks/1/archive`, { method: "POST" });
+    expect(res.status).toBe(200);
+    // The dependent keeps its edge and stays unblocked (archived = Complete).
+    const board = (await (await fetch(`${srv.baseUrl}/api/board`)).json()) as {
+      lanes: Record<string, Array<{ id: number; blockedBy: number[] }>>;
+    };
+    const dep = board.lanes.doing.find((t) => t.id === 2);
+    expect(dep?.blockedBy).toEqual([]);
+  } finally {
+    srv.stop();
+  }
+});
+
 // ─── Behavior 9: POST /api/tasks creates a Task in backlog ───────────────────
 
 test("POST /api/tasks lands a new Task in backlog/ with the given effort in exactly one commit; appears in next /api/board", async () => {
