@@ -72,6 +72,28 @@ function applyOptimisticMove(board: Board, task: BoardTask, toColumn: string): B
   return { ...board, lanes };
 }
 
+/** Relocate the card already present in `board` (found by uuid) to the end of
+ *  `toCol`. Uses the card object the current board holds — never a stale
+ *  drag-time copy — so snap-back can't re-materialize outdated fields. Returns
+ *  the board unchanged if the uuid isn't present anywhere. */
+function moveCardBetweenLanes(board: Board, uuid: string, toCol: string): Board {
+  let card: BoardTask | undefined;
+  for (const col of board.columns) {
+    const found = (board.lanes[col] ?? []).find((t) => t.uuid === uuid);
+    if (found) {
+      card = found;
+      break;
+    }
+  }
+  if (!card) return board;
+  const lanes: Record<string, BoardTask[]> = {};
+  for (const col of board.columns) {
+    lanes[col] = (board.lanes[col] ?? []).filter((t) => t.uuid !== uuid);
+  }
+  lanes[toCol] = [...(lanes[toCol] ?? []), { ...card, column: toCol }];
+  return { ...board, lanes };
+}
+
 export const useBoardStore = create<BoardState>((set, get) => ({
   board: null,
   status: "idle",
@@ -113,6 +135,10 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     const board = get().board;
     if (!board) return;
     if (task.column === toColumn) return; // drop on own lane = no-op, no POST.
+    // A card with an in-flight move can't be dragged again until it resolves:
+    // a second move would overwrite pending (with a now-wrong fromColumn) and
+    // orphan the first request. Ignore the drag until the pending write lands.
+    if (get().pending[task.uuid]) return;
 
     const fromColumn = task.column;
 
@@ -168,9 +194,17 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       set((s) => {
         const { [task.uuid]: _dropped, ...rest } = s.pending;
         const current = s.board;
-        const snappedBack = current
-          ? applyOptimisticMove(current, { ...task, column: toColumn }, fromColumn)
-          : current;
+        // Snap back ONLY when the card is still our optimistic copy in toColumn.
+        // If a newer authoritative snapshot superseded the move (card no longer
+        // in toColumn), the snapshot already won — leave the board untouched.
+        // When we do snap back, relocate the card the current board holds, never
+        // the stale drag-time object.
+        const stillOptimistic =
+          current?.lanes[toColumn]?.some((t) => t.uuid === task.uuid) ?? false;
+        const snappedBack =
+          current && stillOptimistic
+            ? moveCardBetweenLanes(current, task.uuid, fromColumn)
+            : current;
         return { board: snappedBack, pending: rest, toast: { code, message } };
       });
     }
