@@ -476,6 +476,78 @@ test("POST /api/tasks/:id/move with an invalid column returns INVALID_COLUMN + n
   }
 });
 
+// ─── Behavior 9: POST /api/tasks creates a Task in backlog ───────────────────
+
+test("POST /api/tasks lands a new Task in backlog/ with the given effort in exactly one commit; appears in next /api/board", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const srv = await startServe();
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "brand new task", body: "## Acceptance\n- done\n", effort: "high" }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { ok: boolean; id: number; uuid: string; column: string };
+    expect(body.ok).toBe(true);
+    // Fresh Short ID allocated from meta.yaml (next_id started at 1).
+    expect(body.id).toBe(1);
+    expect(typeof body.uuid).toBe("string");
+    expect(body.uuid.length).toBeGreaterThan(0);
+    expect(body.column).toBe("backlog");
+
+    // Exactly one new commit (same single-commit invariant as `tasks new`).
+    expect(await countCommits(storeDir)).toBe(before + 1);
+
+    // The file landed in backlog/ on disk.
+    const files = (await Bun.$`ls ${join(storeDir, "backlog")}`.text()).trim().split(/\s+/);
+    expect(files.some((f) => f.startsWith(`${body.id}-`) && f.endsWith(".md"))).toBe(true);
+
+    // Appears in the next board snapshot, in backlog, with the given effort.
+    const boardRes = await fetch(`${srv.baseUrl}/api/board`);
+    const board = (await boardRes.json()) as {
+      lanes: Record<string, Array<{ id: number; title: string; effort: string; attendance: string }>>;
+    };
+    const created = board.lanes.backlog.find((t) => t.id === body.id)!;
+    expect(created).toBeDefined();
+    expect(created.title).toBe("brand new task");
+    expect(created.effort).toBe("high");
+    expect(created.attendance).toBe("attended");
+  } finally {
+    srv.stop();
+  }
+});
+
+test("POST /api/tasks with missing/empty title is rejected with INVALID_TITLE + non-2xx, no commit", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  await commitStore(storeDir);
+  const before = await countCommits(storeDir);
+
+  const srv = await startServe();
+  try {
+    for (const payload of [{}, { title: "" }, { title: "   " }]) {
+      const res = await fetch(`${srv.baseUrl}/api/tasks`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      expect(res.status).toBe(statusForCode("INVALID_TITLE"));
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      const body = (await res.json()) as { error?: { code?: string } };
+      expect(body.error?.code).toBe("INVALID_TITLE");
+    }
+    // No task was created: commit count is unchanged.
+    expect(await countCommits(storeDir)).toBe(before);
+  } finally {
+    srv.stop();
+  }
+});
+
 test("POST /api/tasks/:id/move into doing succeeds even with an unresolved blocker (open transitions)", async () => {
   const storeDir = deriveStorePath(tasksHome, cwdDir);
   await initBareStore(storeDir);

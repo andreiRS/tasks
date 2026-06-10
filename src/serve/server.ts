@@ -1,4 +1,14 @@
-import { COLUMNS, findAllTasks, findArchivedTasks, findTask, moveTask, TasksError } from "../store.ts";
+import {
+  COLUMNS,
+  EFFORT_VALUES,
+  createTask,
+  findAllTasks,
+  findArchivedTasks,
+  findTask,
+  moveTask,
+  TasksError,
+  validateTitle,
+} from "../store.ts";
 import { computeBlockedBy } from "../render.ts";
 import { buildBoardSnapshot } from "./snapshot.ts";
 
@@ -27,6 +37,9 @@ export function startBoardServer(opts: ServeOptions): ReturnType<typeof Bun.serv
       const url = new URL(req.url);
       if (req.method === "GET" && url.pathname === "/api/board") {
         return handleBoard(dir);
+      }
+      if (req.method === "POST" && url.pathname === "/api/tasks") {
+        return handleCreate(dir, req);
       }
       const moveMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/move$/);
       if (req.method === "POST" && moveMatch) {
@@ -100,6 +113,67 @@ async function handleMove(dir: string, id: string, req: Request): Promise<Respon
       { ok: true, id: before?.id ?? null, uuid: before?.uuid ?? null, from: before?.column ?? null, to: column },
       200,
     );
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+/**
+ * POST /api/tasks — create a Task by reusing the `createTask` core (same
+ * flock -> dirty-guard -> validate -> write -> commit path as `tasks new`).
+ *
+ * Contract (field names chosen so #16 edit + #21 modal can reuse them):
+ *   - request body is JSON `{ title, body?, effort? }`.
+ *     - `title` is required, non-empty (validateTitle rules, shared with `new`).
+ *     - `body` is optional markdown (acceptance criteria etc.).
+ *     - `effort` is optional, one of low/medium/high; defaults to the core
+ *       DEFAULT_EFFORT (`medium`), exactly like `tasks new`.
+ *   - attendance defaults to `attended` and the task lands in `backlog`, set
+ *     by the core (we pass neither, so the core applies its defaults).
+ *   - success: 201 `{ ok, id, uuid, column }`. Lean by design — the frontend
+ *     reconciles the full task from the next board/SSE read; we return just the
+ *     fresh Short ID + uuid so the #21 modal can react.
+ *   - missing/empty title: INVALID_TITLE (400). Invalid effort: INVALID_EFFORT
+ *     (400). Both validated here before the mutation, mirroring `tasks new`.
+ */
+async function handleCreate(dir: string, req: Request): Promise<Response> {
+  try {
+    let parsed: { title?: unknown; body?: unknown; effort?: unknown };
+    try {
+      parsed = (await req.json()) as typeof parsed;
+    } catch {
+      throw new TasksError("MISSING_FIELD", "request body must be JSON with a `title` field", {});
+    }
+
+    const titleError = validateTitle(parsed?.title);
+    if (titleError !== null) {
+      throw new TasksError("INVALID_TITLE", titleError, {});
+    }
+    const title = parsed.title as string;
+
+    let effort: "low" | "medium" | "high" | undefined;
+    if (parsed.effort !== undefined) {
+      if (typeof parsed.effort !== "string" || !(EFFORT_VALUES as readonly string[]).includes(parsed.effort)) {
+        throw new TasksError("INVALID_EFFORT", `invalid effort value: ${String(parsed.effort)}. Allowed: ${EFFORT_VALUES.join(", ")}`, {
+          value: parsed.effort,
+          allowed: [...EFFORT_VALUES],
+        });
+      }
+      effort = parsed.effort as "low" | "medium" | "high";
+    }
+
+    let body: string | undefined;
+    if (parsed.body !== undefined) {
+      if (typeof parsed.body !== "string") {
+        throw new TasksError("MISSING_FIELD", "`body` must be a string", { field: "body" });
+      }
+      body = parsed.body;
+    }
+
+    const id = await createTask(dir, title, { effort, body });
+    const created = findTask(dir, String(id));
+
+    return jsonResponse({ ok: true, id, uuid: created?.uuid ?? null, column: "backlog" }, 201);
   } catch (err) {
     return errorResponse(err);
   }
