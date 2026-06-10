@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { COLUMNS } from "../src/store.ts";
 import { statusForCode } from "../src/serve/server.ts";
 import { isIgnoredWatchPath } from "../src/serve/live.ts";
+import { contentTypeFor } from "../src/serve/assets.ts";
 
 /** Repo root (this file lives in tests/). */
 const REPO_ROOT = join(import.meta.dir, "..");
@@ -1210,6 +1211,94 @@ test("with built assets present: /api/* still behaves (board JSON), not the SPA 
   } finally {
     srv.stop();
   }
+});
+
+// ─── Finding 1: any /api-namespace path -> JSON error envelope, never SPA ─────
+
+test("with built assets present: GET /api (no trailing slash) returns a JSON error envelope, not the SPA shell", async () => {
+  await ensureWebDist();
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  await commitStore(storeDir);
+
+  const srv = await startServe([], { TASKS_WEB_DIST: WEB_DIST });
+  try {
+    const res = await fetch(`${srv.baseUrl}/api`);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.headers.get("content-type") ?? "").toContain("application/json");
+    expect(res.headers.get("content-type") ?? "").not.toContain("text/html");
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe("NOT_FOUND");
+  } finally {
+    srv.stop();
+  }
+});
+
+// ─── Finding 2: ALL built files (root-level + nested) are embedded + served ───
+
+/** Build a synthetic dist dir with a root-level file, to test non-/assets serving. */
+function plantDist(): string {
+  const dist = mkdtempSync(join(tmpdir(), "tasks-web-dist-"));
+  writeFileSync(
+    join(dist, "index.html"),
+    '<!doctype html><html><body><div id="root"></div></body></html>',
+    "utf-8",
+  );
+  mkdirSync(join(dist, "assets"), { recursive: true });
+  writeFileSync(join(dist, "assets", "index-deadbeef.js"), "console.log(1)", "utf-8");
+  // A root-level public asset (favicon.ico) with known bytes.
+  const icoBytes = Buffer.from([0x00, 0x00, 0x01, 0x00, 0x01, 0x00]); // ICO magic header
+  writeFileSync(join(dist, "favicon.ico"), icoBytes);
+  // A web/public-style root file with no extension-special handling.
+  writeFileSync(join(dist, "robots.txt"), "User-agent: *\nDisallow:\n", "utf-8");
+  return dist;
+}
+
+test("with built assets present: GET /favicon.ico (root-level) serves the embedded file with the right content-type + bytes, not SPA HTML", async () => {
+  const dist = plantDist();
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  await commitStore(storeDir);
+
+  const srv = await startServe([], { TASKS_WEB_DIST: dist });
+  try {
+    const res = await fetch(`${srv.baseUrl}/favicon.ico`);
+    expect(res.status).toBe(200);
+    const ct = res.headers.get("content-type") ?? "";
+    expect(ct).not.toContain("text/html");
+    expect(ct === "image/x-icon" || ct === "image/vnd.microsoft.icon").toBe(true);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    expect(Array.from(bytes.slice(0, 6))).toEqual([0x00, 0x00, 0x01, 0x00, 0x01, 0x00]);
+
+    // A root-level non-asset file is also served (web/public passthrough).
+    const robots = await fetch(`${srv.baseUrl}/robots.txt`);
+    expect(robots.status).toBe(200);
+    expect(await robots.text()).toContain("User-agent");
+  } finally {
+    srv.stop();
+    rmSync(dist, { recursive: true, force: true });
+  }
+});
+
+// ─── Finding 3: contentTypeFor covers the common built-asset types ────────────
+
+test("contentTypeFor maps the common built-asset extensions", () => {
+  expect(contentTypeFor("/index.html")).toContain("text/html");
+  expect(contentTypeFor("/assets/x.js")).toContain("javascript");
+  expect(contentTypeFor("/assets/x.css")).toContain("text/css");
+  expect(contentTypeFor("/logo.svg")).toBe("image/svg+xml");
+  expect(contentTypeFor("/favicon.ico")).toBe("image/x-icon");
+  expect(contentTypeFor("/f.woff2")).toBe("font/woff2");
+  expect(contentTypeFor("/f.woff")).toBe("font/woff");
+  expect(contentTypeFor("/img.png")).toBe("image/png");
+  expect(contentTypeFor("/img.jpg")).toBe("image/jpeg");
+  expect(contentTypeFor("/img.jpeg")).toBe("image/jpeg");
+  expect(contentTypeFor("/img.webp")).toBe("image/webp");
+  expect(contentTypeFor("/data.json")).toBe("application/json");
+  // Source maps end in `.map` (e.g. index-XXX.js.map).
+  expect(contentTypeFor("/assets/index-XXX.js.map")).toBe("application/json");
+  // Unknown extension -> safe default.
+  expect(contentTypeFor("/thing.bin")).toBe("application/octet-stream");
 });
 
 test("without built assets (dev): unknown non-/api route 404s and /api still works", async () => {

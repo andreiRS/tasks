@@ -68,10 +68,12 @@ export async function startBoardServer(opts: ServeOptions): Promise<ReturnType<t
         return handleEdit(dir, decodeURIComponent(editMatch[1]!), req);
       }
 
-      // Non-/api routes: serve the SPA when assets are present (prod binary).
-      // Everything under /api that did not match above is a real 404 and must
-      // NOT fall back to the SPA shell.
-      if (assets && !url.pathname.startsWith("/api/") && req.method === "GET") {
+      // Non-API routes: serve the SPA when assets are present (prod binary).
+      // ANY path whose first segment is `api` (bare `/api` AND `/api/...`) is the
+      // API namespace and must fall through to the JSON NOT_FOUND envelope below,
+      // NEVER the SPA shell — a 200 text/html where JSON was expected hides bugs.
+      // (A bare `/api` previously slipped past a `startsWith('/api/')`-only guard.)
+      if (assets && !isApiNamespace(url.pathname) && req.method === "GET") {
         return serveAsset(assets, url.pathname);
       }
 
@@ -297,17 +299,30 @@ async function handleEdit(dir: string, id: string, req: Request): Promise<Respon
   }
 }
 
+/** True when `pathname`'s first segment is `api` (bare `/api` or `/api/...`). */
+function isApiNamespace(pathname: string): boolean {
+  return pathname === "/api" || pathname.startsWith("/api/");
+}
+
 /**
- * Serve a non-/api route from the built SPA bundle (prod binary). The rules:
+ * Serve a non-API route from the built SPA bundle (prod binary). Serving is
+ * strictly MANIFEST-KEYED: we look up the exact request path in the embedded
+ * asset map (never join the request onto a filesystem path — no traversal
+ * surface). The rules:
  *
- *   - "/" → the SPA shell (index.html), text/html.
- *   - "/assets/<hashed-file>" → the matching built artifact with its content
- *     type; if no such artifact exists, a real 404 (a missing hashed asset is a
- *     bug, not a client route — never SPA-fall-back, or the browser would get
- *     HTML where it expected JS/CSS and fail silently).
- *   - any other GET (e.g. "/board/123") → SPA fallback to index.html, so the
- *     client router owns deep links. This is a single-binary localhost board,
- *     so caching headers are intentionally omitted.
+ *   - "/" or "/index.html" → the SPA shell, text/html.
+ *   - an EXACT manifest match (e.g. "/assets/index-XXX.js", "/favicon.ico",
+ *     "/robots.txt", any built file at any depth) → that file with its content
+ *     type.
+ *   - no manifest match, and the path looks like a static asset — under
+ *     "/assets/" OR with a file extension (e.g. "/missing.js", "/favicon.ico")
+ *     → a real 404. Never SPA-fall-back, or the browser would get HTML where it
+ *     expected JS/CSS/an image and fail silently.
+ *   - no manifest match, extensionless (e.g. "/board/123") → SPA fallback to
+ *     index.html, so the client router owns deep links.
+ *
+ * This is a single-binary localhost board, so caching headers are intentionally
+ * omitted.
  */
 function serveAsset(assets: AssetBundle, pathname: string): Response {
   if (pathname === "/" || pathname === "/index.html") {
@@ -315,14 +330,18 @@ function serveAsset(assets: AssetBundle, pathname: string): Response {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   }
-  if (pathname.startsWith("/assets/")) {
-    const blob = assets.assets.get(pathname);
-    if (!blob) {
-      return errorResponse(new TasksError("NOT_FOUND", "no such asset", { path: pathname }));
-    }
+  const blob = assets.assets.get(pathname);
+  if (blob) {
     return new Response(blob, { headers: { "content-type": contentTypeFor(pathname) } });
   }
-  // SPA fallback: unknown non-asset route renders the shell, client router takes over.
+  // No exact match. An asset-looking path (under /assets/ or with a file
+  // extension) is a real 404, not a client route — never SPA-fall-back.
+  const lastSegment = pathname.slice(pathname.lastIndexOf("/") + 1);
+  const looksLikeAsset = pathname.startsWith("/assets/") || lastSegment.includes(".");
+  if (looksLikeAsset) {
+    return errorResponse(new TasksError("NOT_FOUND", "no such asset", { path: pathname }));
+  }
+  // SPA fallback: unknown extensionless route renders the shell, client router takes over.
   return new Response(assets.indexHtml, {
     headers: { "content-type": "text/html; charset=utf-8" },
   });

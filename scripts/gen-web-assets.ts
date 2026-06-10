@@ -15,7 +15,7 @@
  * the dynamic import in assets.ts fails closed and `serve` runs API-only.
  */
 import { readdirSync, existsSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 
 const REPO_ROOT = join(import.meta.dir, "..");
 const DIST = join(REPO_ROOT, "web", "dist");
@@ -38,26 +38,34 @@ interface Entry {
   route: string; // request path the server serves it under
 }
 
+/** Recursively list every file under `root`, as paths relative to `root`. */
+function walkFiles(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) walk(abs);
+      else out.push(relative(root, abs));
+    }
+  };
+  walk(root);
+  return out;
+}
+
 const entries: Entry[] = [];
 let id = 0;
 
-// index.html
-entries.push({
-  varName: `a${id++}`,
-  importPath: fromGen(join(DIST, "index.html")),
-  route: "/index.html",
-});
-
-// hashed assets under web/dist/assets
-const assetsDir = join(DIST, "assets");
-if (existsSync(assetsDir)) {
-  for (const name of readdirSync(assetsDir)) {
-    entries.push({
-      varName: `a${id++}`,
-      importPath: fromGen(join(assetsDir, name)),
-      route: `/assets/${name}`,
-    });
-  }
+// Embed EVERY built file under web/dist (recursively): index.html, the hashed
+// `assets/`, AND root-level files (favicon.ico, robots.txt, anything Vite copies
+// from web/public/), at any depth. Each is keyed by its dist-relative request
+// path so the seam can serve it on an exact match.
+for (const rel of walkFiles(DIST)) {
+  const route = "/" + rel.split(sep).join("/");
+  entries.push({
+    varName: `a${id++}`,
+    importPath: fromGen(join(DIST, rel)),
+    route,
+  });
 }
 
 const importLines = entries

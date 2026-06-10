@@ -1,5 +1,5 @@
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { embeddedFiles } from "bun";
 
 /**
@@ -49,9 +49,13 @@ export function contentTypeFor(path: string): string {
   if (path.endsWith(".js")) return "text/javascript; charset=utf-8";
   if (path.endsWith(".css")) return "text/css; charset=utf-8";
   if (path.endsWith(".svg")) return "image/svg+xml";
+  // `.map` (source maps) is JSON; check before the generic `.json` for clarity.
+  if (path.endsWith(".map")) return "application/json";
   if (path.endsWith(".json")) return "application/json";
   if (path.endsWith(".ico")) return "image/x-icon";
   if (path.endsWith(".png")) return "image/png";
+  if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
+  if (path.endsWith(".webp")) return "image/webp";
   if (path.endsWith(".woff2")) return "font/woff2";
   if (path.endsWith(".woff")) return "font/woff";
   return "application/octet-stream";
@@ -70,17 +74,36 @@ export async function loadAssets(): Promise<AssetBundle | null> {
   return loadFromEmbedded();
 }
 
-/** Read a built `web/dist` from disk (test/dev affordance). */
+/**
+ * Read a built `web/dist` from disk (test/dev affordance). Walks the WHOLE
+ * tree (root-level files like favicon.ico, web/public passthrough, the hashed
+ * `assets/`, and any nested dir) and keys each file by its dist-relative request
+ * path (e.g. "/favicon.ico", "/assets/index-XXX.js"). index.html is also the SPA
+ * shell. This mirrors the embedded path (loadFromEmbedded) exactly.
+ */
 async function loadFromDir(distDir: string): Promise<AssetBundle> {
   const indexHtml = await Bun.file(join(distDir, "index.html")).text();
   const assets = new Map<string, Blob>();
-  const assetsDir = join(distDir, "assets");
-  if (existsSync(assetsDir)) {
-    for (const name of readdirSync(assetsDir)) {
-      assets.set(`/assets/${name}`, Bun.file(join(assetsDir, name)));
-    }
+  for (const rel of walkFiles(distDir)) {
+    // Normalise Windows separators just in case; request paths use "/".
+    const route = "/" + rel.split(sep).join("/");
+    assets.set(route, Bun.file(join(distDir, rel)));
   }
   return { indexHtml, assets };
+}
+
+/** Recursively list every file under `root`, as paths relative to `root`. */
+function walkFiles(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) walk(abs);
+      else out.push(relative(root, abs));
+    }
+  };
+  walk(root);
+  return out;
 }
 
 /**
