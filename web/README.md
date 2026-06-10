@@ -47,11 +47,14 @@ fronts the UI. The asset-serving seam (`src/serve/assets.ts`) returns `null`, so
 non-`/api` routes on the backend 404 — that's expected, you talk to Vite (5173),
 not the backend (4317).
 
-**Known dev-only quirk — SSE stalls after a write.** Through the Vite dev proxy
-(`bun run dev`), live SSE updates can stall after a write: the proxy doesn't
-reliably stream `text/event-stream` concurrently with a POST. A hard refresh
-recovers the stream. This is purely a dev-proxy artifact — the compiled
-single-origin production binary (`tasks serve`) is unaffected.
+**SSE liveness.** `Bun.serve` closes a connection after 10s of no bytes
+(default `idleTimeout`), and an SSE stream is quiet between board mutations, so
+the live board's stream used to die after ~10s (it looked like a "stall after a
+write" until refresh, and was wrongly blamed on the Vite proxy — it hit direct
+connections too). The events route now calls `server.timeout(req, 0)` to
+disable the idle timeout for that request, plus sends a 15s heartbeat keep-alive
+that also survives any external proxy's own idle timeout. If you fork the
+backend and still see the stream go quiet, check those two in `src/serve/`.
 
 ## Production build (single binary)
 
