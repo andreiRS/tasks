@@ -663,6 +663,52 @@ test("PATCH /api/tasks/:id replaces body via the new core path in one commit; ro
   }
 });
 
+test("PATCH /api/tasks/:id round-trips bodies containing Markdown --- horizontal rules verbatim", async () => {
+  const storeDir = deriveStorePath(tasksHome, cwdDir);
+  await initBareStore(storeDir);
+  plantTask(storeDir, "backlog", 1, "hr task");
+  plantTask(storeDir, "backlog", 2, "fence task");
+  plantTask(storeDir, "backlog", 3, "bare rule task");
+  await commitStore(storeDir);
+
+  // 1) A normal Markdown horizontal rule between two paragraphs.
+  const hrBody = "Steps\n\n---\n\nDone\n";
+  // 2) A fenced code block whose content has a `---` line.
+  const fenceBody = "```yaml\nfoo: bar\n---\nbaz: qux\n```\n";
+  // 3) A body that is exactly a bare horizontal rule.
+  const bareBody = "---\n";
+
+  const srv = await startServe([], { TASKS_NOW: LATER_NOW });
+  try {
+    const cases: Array<[number, string]> = [
+      [1, hrBody],
+      [2, fenceBody],
+      [3, bareBody],
+    ];
+    for (const [id, body] of cases) {
+      const res = await fetch(`${srv.baseUrl}/api/tasks/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ body }),
+      });
+      expect(res.status).toBe(200);
+    }
+
+    const boardRes = await fetch(`${srv.baseUrl}/api/board`);
+    const board = (await boardRes.json()) as {
+      lanes: Record<string, Array<{ id: number; body: string }>>;
+    };
+    for (const [id, body] of cases) {
+      const t = board.lanes.backlog.find((x) => x.id === id)!;
+      expect(t).toBeDefined();
+      // Byte-for-byte identical: no swallowed newlines, no body split on ---.
+      expect(t.body).toBe(body);
+    }
+  } finally {
+    srv.stop();
+  }
+});
+
 // ─── Behavior 12: PATCH validation — effort/attendance/title/empty ────────────
 
 test("PATCH /api/tasks/:id rejects invalid effort/attendance with correct codes + non-2xx, no commit", async () => {
